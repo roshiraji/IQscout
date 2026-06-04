@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+  
+    {
+      "name": "Process sample WNBA clip",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scoutiq/src/process_video.py",
+      "args": [
+        "data/input_videos/sample_wnba_clip.mp4"
+      ],
+      "cwd": "${workspaceFolder}/scoutiq",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Process video (pick file)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scoutiq/src/process_video.py",
+      "args": [
+        "${input:videoPath}"
+      ],
+      "cwd": "${workspaceFolder}/scoutiq",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "videoPath",
+      "type": "promptString",
+      "description": "Path to MP4 (relative to scoutiq/, e.g. data/input_videos/my_clip.mp4)",
+      "default": "data/input_videos/sample_wnba_clip.mp4"
+    }
+  ]
+}
