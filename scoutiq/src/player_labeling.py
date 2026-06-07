@@ -1,11 +1,23 @@
 """
 YOLO-based player labeling for WNBA basketball clips.
 
-Detects people in each frame with YOLOv8 (Ultralytics), draws bounding boxes
+Detects people in each frame with YOLO26 (Ultralytics), draws bounding boxes
 labeled Player_1, Player_2, etc., and exports an annotated video plus CSV.
 
 Note: labels reset every frame. Player_1 in frame 10 may not be the same
 person as Player_1 in frame 11. Tracking (ByteTrack/DeepSORT) comes later.
+
+# Phase 2:
+# ByteTrack tracking
+
+# Phase 3:
+# Jersey number recognition
+
+# Phase 4:
+# Player identification
+
+# Phase 5:
+# Spacing and play analytics
 """
 
 from __future__ import annotations
@@ -14,6 +26,7 @@ import argparse
 import csv
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,38 +34,23 @@ import cv2
 import torch
 from ultralytics import YOLO
 
-# --- Detection settings ---
-DEFAULT_MODEL = "yolov8n.pt"
-PERSON_CLASS_ID = 0
-PERSON_CLASS_NAME = "person"
-CONFIDENCE_THRESHOLD = 0.35
+from yolo_config import (
+    AVAILABLE_IMGSZ,
+    AVAILABLE_YOLO_MODELS,
+    DEFAULT_YOLO_MODEL,
+    InferenceProfile,
+    LOW_CONF_REVIEW_MIN,
+    PERSON_CLASS_ID,
+    PERSON_CLASS_NAME,
+    QUALITY_MODE,
+    get_inference_profile,
+    load_yolo_model,
+    model_display_name,
+)
 
 # Output folders (relative to scoutiq/ project root)
 ANNOTATED_DIR = Path("outputs/annotated_videos")
 DETECTIONS_DIR = Path("outputs/detections")
-
-
-def resolve_device(requested: str | None = None) -> str:
-    """
-    Choose the best YOLO inference device.
-
-    Uses GPU (CUDA) when available unless the caller forces --device cpu.
-    """
-    if requested:
-        return requested
-    if torch.cuda.is_available():
-        return "0"
-    return "cpu"
-
-
-def describe_device(device: str) -> str:
-    """Return a human-readable device label for logs and UI."""
-    if device == "cpu":
-        return "CPU"
-    if torch.cuda.is_available():
-        gpu_name = torch.cuda.get_device_name(int(device) if device.isdigit() else 0)
-        return f"GPU ({gpu_name})"
-    return f"GPU (device {device})"
 
 
 @dataclass
@@ -72,11 +70,27 @@ class VideoMetadata:
         return self.frame_count / self.fps
 
 
+def resolve_device(requested: str | None = None) -> str:
+    """Choose the best YOLO inference device."""
+    if requested:
+        return requested
+    if torch.cuda.is_available():
+        return "0"
+    return "cpu"
+
+
+def describe_device(device: str) -> str:
+    """Return a human-readable device label for logs and UI."""
+    if device == "cpu":
+        return "CPU"
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(int(device) if device.isdigit() else 0)
+        return f"GPU ({gpu_name})"
+    return f"GPU (device {device})"
+
+
 def get_video_metadata(video_path: Path) -> VideoMetadata:
-    """
-    Confirm the input file exists, is MP4, and can be read by OpenCV.
-    Raises FileNotFoundError or ValueError with a clear message on failure.
-    """
+    """Confirm the input file exists, is MP4, and can be read by OpenCV."""
     if not video_path.is_file():
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
@@ -92,7 +106,6 @@ def get_video_metadata(video_path: Path) -> VideoMetadata:
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    # Verify at least one frame is readable
     ret, _ = cap.read()
     cap.release()
 
@@ -133,12 +146,12 @@ def print_metadata(metadata: VideoMetadata) -> None:
 
 
 def _sort_detections_left_to_right(boxes: list[dict]) -> list[dict]:
-    """Order detections left-to-right so Player_1, Player_2 labels are stable within a frame."""
+    """Order detections top-to-bottom, left-to-right for stable per-frame labels."""
     return sorted(boxes, key=lambda b: (b["y1"], b["x1"]))
 
 
-def _extract_person_boxes(result, confidence_threshold: float) -> list[dict]:
-    """Pull person detections above the confidence threshold from one YOLO result."""
+def _parse_person_boxes(result) -> list[dict]:
+    """Parse all person detections from one YOLO result (already filtered at review floor)."""
     detections: list[dict] = []
 
     if result.boxes is None:
@@ -148,18 +161,17 @@ def _extract_person_boxes(result, confidence_threshold: float) -> list[dict]:
         class_id = int(box.cls[0])
         confidence = float(box.conf[0])
 
-        if class_id != PERSON_CLASS_ID or confidence < confidence_threshold:
+        if class_id != PERSON_CLASS_ID:
             continue
 
         x1, y1, x2, y2 = box.xyxy[0].tolist()
         x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
-        box_width = x2 - x1
-        box_height = y2 - y1
 
         detections.append(
             {
+                "class_id": class_id,
                 "class_name": PERSON_CLASS_NAME,
                 "confidence": round(confidence, 4),
                 "x1": x1,
@@ -168,20 +180,67 @@ def _extract_person_boxes(result, confidence_threshold: float) -> list[dict]:
                 "y2": y2,
                 "center_x": round(center_x, 2),
                 "center_y": round(center_y, 2),
-                "box_width": box_width,
-                "box_height": box_height,
+                "box_width": x2 - x1,
+                "box_height": y2 - y1,
             }
         )
 
-    return _sort_detections_left_to_right(detections)
+    return detections
+
+
+def _split_detections(
+    boxes: list[dict],
+    primary_conf: float,
+) -> tuple[list[dict], list[dict]]:
+    """
+    Split detections into primary (used for labels/video) and review candidates.
+
+    Review candidates may represent distant or partially occluded players
+    recoverable later via ByteTrack.
+    """
+    primary: list[dict] = []
+    review: list[dict] = []
+
+    for box in boxes:
+        if box["confidence"] >= primary_conf:
+            primary.append(box)
+        elif LOW_CONF_REVIEW_MIN <= box["confidence"] < primary_conf:
+            review.append(box)
+
+    return _sort_detections_left_to_right(primary), review
+
+
+def _frame_statistics_row(frame_number: int, primary: list[dict]) -> dict:
+    """Build per-frame detection statistics from primary detections."""
+    if not primary:
+        return {
+            "frame_number": frame_number,
+            "player_count": 0,
+            "avg_confidence": 0.0,
+            "max_confidence": 0.0,
+            "min_confidence": 0.0,
+        }
+
+    confidences = [det["confidence"] for det in primary]
+    return {
+        "frame_number": frame_number,
+        "player_count": len(primary),
+        "avg_confidence": round(sum(confidences) / len(confidences), 4),
+        "max_confidence": round(max(confidences), 4),
+        "min_confidence": round(min(confidences), 4),
+    }
+
+
+def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
+    """Write rows to a CSV file."""
+    with path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _encode_for_browser(video_path: Path) -> Path:
-    """
-    Re-encode the annotated MP4 to H.264 for browser and Streamlit playback.
-
-    OpenCV writes mp4v by default, which most browsers cannot play.
-    """
+    """Re-encode the annotated MP4 to H.264 for browser and Streamlit playback."""
     try:
         import imageio_ffmpeg
     except ImportError:
@@ -239,19 +298,39 @@ def _draw_labels(frame, detections: list[dict]) -> None:
         )
 
 
+def _run_inference(model: YOLO, frame, device: str, profile: InferenceProfile):
+    """Run YOLO on one frame with the active quality/speed profile."""
+    return model(
+        frame,
+        classes=[PERSON_CLASS_ID],
+        device=device,
+        imgsz=profile.imgsz,
+        conf=LOW_CONF_REVIEW_MIN,
+        augment=profile.augment,
+        iou=profile.iou,
+        verbose=False,
+    )
+
+
 def process_video(
     metadata: VideoMetadata,
     model: YOLO,
     annotated_path: Path,
-    csv_path: Path,
+    player_labels_path: Path,
+    bytetrack_path: Path,
+    frame_stats_path: Path,
+    low_conf_path: Path,
     device: str = "cpu",
-) -> dict[str, int]:
+    model_name: str | None = None,
+    profile: InferenceProfile | None = None,
+) -> dict[str, float | int]:
     """
-    Run YOLO on every frame, write annotated video and detection CSV.
-    Returns summary stats for UI and pipeline integrations.
+    Run YOLO on every frame individually and write all detection outputs.
     """
     ANNOTATED_DIR.mkdir(parents=True, exist_ok=True)
     DETECTIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+    inference_profile = profile or get_inference_profile()
 
     cap = cv2.VideoCapture(str(metadata.path))
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -266,11 +345,23 @@ def process_video(
         cap.release()
         raise RuntimeError(f"Could not create output video: {annotated_path}")
 
-    csv_rows: list[dict] = []
-    frame_number = 0
+    player_label_rows: list[dict] = []
+    bytetrack_rows: list[dict] = []
+    frame_stat_rows: list[dict] = []
+    low_conf_rows: list[dict] = []
+    inference_times: list[float] = []
 
-    print("Starting YOLO player detection...")
-    print(f"Model: {DEFAULT_MODEL} | class: {PERSON_CLASS_NAME} | min confidence: {CONFIDENCE_THRESHOLD}")
+    frame_number = 0
+    pipeline_start = time.perf_counter()
+
+    print("Starting YOLO26 player detection (every frame)...")
+    print(f"Model: {model_display_name(model_name)}")
+    print(f"Mode:  {inference_profile.mode_label}")
+    print(
+        f"Settings: imgsz={inference_profile.imgsz}, primary_conf={inference_profile.conf}, "
+        f"augment={inference_profile.augment}, iou={inference_profile.iou}, "
+        f"review_floor={LOW_CONF_REVIEW_MIN}"
+    )
     print(f"Device: {describe_device(device)}")
 
     while True:
@@ -281,17 +372,31 @@ def process_video(
         frame_number += 1
         timestamp_seconds = round((frame_number - 1) / metadata.fps, 4)
 
-        # Run YOLO on the current frame (person class only) on CPU or GPU
-        results = model(frame, classes=[PERSON_CLASS_ID], device=device, verbose=False)
-        detections = _extract_person_boxes(results[0], CONFIDENCE_THRESHOLD)
+        infer_start = time.perf_counter()
+        try:
+            results = _run_inference(model, frame, device, inference_profile)
+        except torch.cuda.OutOfMemoryError:
+            if inference_profile.imgsz > 1280:
+                print(
+                    "CUDA out of memory at imgsz="
+                    f"{inference_profile.imgsz}. Retry with --imgsz 1280."
+                )
+            raise
+        infer_elapsed = time.perf_counter() - infer_start
+        inference_times.append(infer_elapsed)
 
-        # Assign per-frame Player_1, Player_2, ... labels
-        for index, det in enumerate(detections, start=1):
-            csv_rows.append(
+        all_boxes = _parse_person_boxes(results[0])
+        primary, review = _split_detections(all_boxes, inference_profile.conf)
+
+        frame_stat_rows.append(_frame_statistics_row(frame_number, primary))
+
+        for index, det in enumerate(primary, start=1):
+            player_label_rows.append(
                 {
                     "frame_number": frame_number,
                     "timestamp_seconds": timestamp_seconds,
                     "label": f"Player_{index}",
+                    "class_id": det["class_id"],
                     "class_name": det["class_name"],
                     "confidence": det["confidence"],
                     "x1": det["x1"],
@@ -304,8 +409,31 @@ def process_video(
                     "box_height": det["box_height"],
                 }
             )
+            bytetrack_rows.append(
+                {
+                    "frame": frame_number,
+                    "class_id": det["class_id"],
+                    "confidence": det["confidence"],
+                    "x1": det["x1"],
+                    "y1": det["y1"],
+                    "x2": det["x2"],
+                    "y2": det["y2"],
+                }
+            )
 
-        _draw_labels(frame, detections)
+        for det in review:
+            low_conf_rows.append(
+                {
+                    "frame_number": frame_number,
+                    "confidence": det["confidence"],
+                    "x1": det["x1"],
+                    "y1": det["y1"],
+                    "x2": det["x2"],
+                    "y2": det["y2"],
+                }
+            )
+
+        _draw_labels(frame, primary)
         writer.write(frame)
 
         if frame_number % 100 == 0:
@@ -313,40 +441,71 @@ def process_video(
 
     cap.release()
     writer.release()
+    total_runtime = time.perf_counter() - pipeline_start
 
-    # Re-encode so the annotated clip plays in browsers (Streamlit st.video)
     _encode_for_browser(annotated_path)
 
-    # Write CSV with one row per detected player per frame
-    fieldnames = [
-        "frame_number",
-        "timestamp_seconds",
-        "label",
-        "class_name",
-        "confidence",
-        "x1",
-        "y1",
-        "x2",
-        "y2",
-        "center_x",
-        "center_y",
-        "box_width",
-        "box_height",
-    ]
+    _write_csv(
+        player_labels_path,
+        [
+            "frame_number",
+            "timestamp_seconds",
+            "label",
+            "class_id",
+            "class_name",
+            "confidence",
+            "x1",
+            "y1",
+            "x2",
+            "y2",
+            "center_x",
+            "center_y",
+            "box_width",
+            "box_height",
+        ],
+        player_label_rows,
+    )
+    _write_csv(
+        bytetrack_path,
+        ["frame", "class_id", "confidence", "x1", "y1", "x2", "y2"],
+        bytetrack_rows,
+    )
+    _write_csv(
+        frame_stats_path,
+        ["frame_number", "player_count", "avg_confidence", "max_confidence", "min_confidence"],
+        frame_stat_rows,
+    )
+    _write_csv(
+        low_conf_path,
+        ["frame_number", "confidence", "x1", "y1", "x2", "y2"],
+        low_conf_rows,
+    )
 
-    with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer_csv = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        writer_csv.writeheader()
-        writer_csv.writerows(csv_rows)
+    avg_inference_ms = (
+        (sum(inference_times) / len(inference_times)) * 1000 if inference_times else 0.0
+    )
+    pipeline_fps = frame_number / total_runtime if total_runtime > 0 else 0.0
 
     print(f"\nDone. Processed {frame_number} frames.")
-    print(f"Annotated video: {annotated_path.resolve()}")
-    print(f"Detection CSV:   {csv_path.resolve()}")
-    print(f"Total detections written: {len(csv_rows)}")
+    print(f"Annotated video:          {annotated_path.resolve()}")
+    print(f"Player labels CSV:        {player_labels_path.resolve()}")
+    print(f"ByteTrack detections CSV: {bytetrack_path.resolve()}")
+    print(f"Frame statistics CSV:     {frame_stats_path.resolve()}")
+    print(f"Low-confidence CSV:       {low_conf_path.resolve()}")
+    print(f"Primary detections:       {len(player_label_rows)}")
+    print(f"Review candidates:        {len(low_conf_rows)}")
+    print("--- Timing ---")
+    print(f"  Total runtime:            {total_runtime:.2f} s")
+    print(f"  Avg inference per frame:  {avg_inference_ms:.1f} ms")
+    print(f"  Pipeline FPS:             {pipeline_fps:.2f}")
 
     return {
         "frames_processed": frame_number,
-        "total_detections": len(csv_rows),
+        "total_detections": len(player_label_rows),
+        "review_candidates": len(low_conf_rows),
+        "total_runtime_seconds": round(total_runtime, 2),
+        "avg_inference_ms_per_frame": round(avg_inference_ms, 2),
+        "pipeline_fps": round(pipeline_fps, 2),
     }
 
 
@@ -354,42 +513,66 @@ def run_player_labeling(
     video_path: str | Path,
     model: YOLO | None = None,
     device: str | None = None,
-) -> dict[str, str | int]:
-    """
-    Run the full YOLO player-labeling pipeline for UI and script integrations.
-
-    Returns paths and summary stats. Raises on invalid input or processing errors.
-    """
+    model_name: str | None = None,
+    quality_mode: bool | None = None,
+    imgsz: int | None = None,
+) -> dict[str, str | int | float | bool]:
+    """Run the full YOLO player-labeling pipeline for UI and script integrations."""
     path = Path(video_path)
     metadata = get_video_metadata(path)
     inference_device = resolve_device(device)
+    profile = get_inference_profile(quality_mode=quality_mode, imgsz=imgsz)
 
     stem = path.stem
     annotated_path = ANNOTATED_DIR / f"{stem}_labeled_players.mp4"
-    csv_path = DETECTIONS_DIR / f"{stem}_player_labels.csv"
+    player_labels_path = DETECTIONS_DIR / f"{stem}_player_labels.csv"
+    bytetrack_path = DETECTIONS_DIR / f"{stem}_bytetrack_detections.csv"
+    frame_stats_path = DETECTIONS_DIR / f"{stem}_frame_statistics.csv"
+    low_conf_path = DETECTIONS_DIR / f"{stem}_low_confidence_candidates.csv"
 
-    yolo_model = model or YOLO(DEFAULT_MODEL)
+    weights = model_name or DEFAULT_YOLO_MODEL
+    yolo_model = model or load_yolo_model(weights)
     stats = process_video(
         metadata,
         yolo_model,
         annotated_path,
-        csv_path,
+        player_labels_path,
+        bytetrack_path,
+        frame_stats_path,
+        low_conf_path,
         device=inference_device,
+        model_name=weights,
+        profile=profile,
     )
 
     return {
         "annotated_video": str(annotated_path.resolve()),
-        "detections_csv": str(csv_path.resolve()),
+        "detections_csv": str(player_labels_path.resolve()),
+        "bytetrack_csv": str(bytetrack_path.resolve()),
+        "frame_statistics_csv": str(frame_stats_path.resolve()),
+        "low_confidence_csv": str(low_conf_path.resolve()),
         "frames_processed": stats["frames_processed"],
         "total_detections": stats["total_detections"],
+        "review_candidates": stats["review_candidates"],
+        "total_runtime_seconds": stats["total_runtime_seconds"],
+        "avg_inference_ms_per_frame": stats["avg_inference_ms_per_frame"],
+        "pipeline_fps": stats["pipeline_fps"],
         "device": inference_device,
         "device_label": describe_device(inference_device),
+        "model": weights,
+        "model_label": model_display_name(weights),
+        "quality_mode": profile.quality_mode,
+        "imgsz": profile.imgsz,
+        "primary_conf": profile.conf,
+        "augment": profile.augment,
+        "iou": profile.iou,
     }
 
 
 def main() -> None:
-    # 1. Parse command-line arguments
-    parser = argparse.ArgumentParser(description="Label basketball players in an MP4 clip with YOLO.")
+    parser = argparse.ArgumentParser(
+        description="Label basketball players in an MP4 clip with YOLO26."
+    )
     parser.add_argument("video_path", help="Path to the input .mp4 file")
     parser.add_argument(
         "--device",
@@ -397,32 +580,78 @@ def main() -> None:
         default=None,
         help="Inference device. Defaults to GPU when CUDA is available, otherwise CPU.",
     )
+    parser.add_argument(
+        "--model",
+        choices=AVAILABLE_YOLO_MODELS,
+        default=DEFAULT_YOLO_MODEL,
+        metavar="WEIGHTS",
+        help=(
+            f"YOLO26 weights (default: {DEFAULT_YOLO_MODEL}). "
+            f"Choices: {', '.join(AVAILABLE_YOLO_MODELS)}"
+        ),
+    )
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--quality",
+        action="store_true",
+        help="Use quality-first inference settings (default).",
+    )
+    mode_group.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use speed-first inference settings.",
+    )
+    parser.add_argument(
+        "--imgsz",
+        type=int,
+        choices=AVAILABLE_IMGSZ,
+        default=None,
+        help="Inference resolution for quality mode (1280 default, 1920 for max quality).",
+    )
     args = parser.parse_args()
+
+    if args.fast:
+        quality_mode = False
+    elif args.quality:
+        quality_mode = True
+    else:
+        quality_mode = QUALITY_MODE
 
     video_path = Path(args.video_path)
     device = resolve_device(args.device)
+    profile = get_inference_profile(quality_mode=quality_mode, imgsz=args.imgsz)
 
-    # 2. Validate input and print metadata
     metadata = validate_video_path(video_path)
     print_metadata(metadata)
 
-    # 3. Build output paths from the input filename
     stem = video_path.stem
     annotated_path = ANNOTATED_DIR / f"{stem}_labeled_players.mp4"
-    csv_path = DETECTIONS_DIR / f"{stem}_player_labels.csv"
+    player_labels_path = DETECTIONS_DIR / f"{stem}_player_labels.csv"
+    bytetrack_path = DETECTIONS_DIR / f"{stem}_bytetrack_detections.csv"
+    frame_stats_path = DETECTIONS_DIR / f"{stem}_frame_statistics.csv"
+    low_conf_path = DETECTIONS_DIR / f"{stem}_low_confidence_candidates.csv"
 
-    # 4. Load YOLO model (downloads yolov8n.pt on first run)
     try:
-        print(f"Loading YOLO model: {DEFAULT_MODEL}")
+        print(f"Loading model: {model_display_name(args.model)}")
         print(f"Using device: {describe_device(device)}")
-        model = YOLO(DEFAULT_MODEL)
+        model = load_yolo_model(args.model)
     except Exception as exc:
-        print(f"Error: Failed to load YOLO model '{DEFAULT_MODEL}': {exc}")
+        print(f"Error: Failed to load YOLO model '{args.model}': {exc}")
         sys.exit(1)
 
-    # 5. Process every frame and save outputs
     try:
-        process_video(metadata, model, annotated_path, csv_path, device=device)
+        process_video(
+            metadata,
+            model,
+            annotated_path,
+            player_labels_path,
+            bytetrack_path,
+            frame_stats_path,
+            low_conf_path,
+            device=device,
+            model_name=args.model,
+            profile=profile,
+        )
     except Exception as exc:
         print(f"Error during player labeling: {exc}")
         sys.exit(1)

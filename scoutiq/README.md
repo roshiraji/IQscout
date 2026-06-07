@@ -122,20 +122,79 @@ Click **Select Video File**, choose an MP4 in File Explorer, and view approval s
 
 **Future pipeline flow:** upload → validate → if approved → `player_labeling.py` → tracking → dashboard
 
-## Player labeling (YOLO)
+## Player labeling (YOLO26)
 
-After a clip passes intake validation, label detected players with YOLOv8. From the `scoutiq/` folder:
+After a clip passes intake validation, label detected players with **Ultralytics YOLO26**. From the `scoutiq/` folder:
 
 ```text
-python src/player_labeling.py data/input_videos/caitlin_clark_clip.mp4
+python src/player_labeling.py "data/input_videos/Caitlin Clark clip.mp4"
 ```
 
-Outputs:
+Default model: `yolo26n.pt` (nano). Choose a larger model for more accuracy:
 
-- `outputs/annotated_videos/<name>_labeled_players.mp4` — video with Player_1, Player_2, ... boxes
-- `outputs/detections/<name>_player_labels.csv` — per-frame box coordinates and confidence
+```text
+python src/player_labeling.py "data/input_videos/Caitlin Clark clip.mp4" --model yolo26s.pt
+```
 
-Labels are per-frame only (no cross-frame tracking yet).
+Both **YOLO26** (default) and **YOLO11** families are selectable in the Streamlit sidebar and via `--model`. Each family has five sizes (n/s/m/l/x):
+
+| Family | Example | Best for |
+|--------|---------|----------|
+| YOLO26 | `yolo26n.pt` | Edge-first default; fastest on CPU/GPU |
+| YOLO26 | `yolo26x.pt` | Maximum YOLO26 quality |
+| YOLO11 | `yolo11n.pt` | Prior-gen baseline / comparison runs |
+| YOLO11 | `yolo11m.pt` | YOLO11 mid-size accuracy |
+
+```text
+python src/player_labeling.py "data/input_videos/Caitlin Clark clip.mp4" --model yolo11s.pt
+python src/player_labeling.py "data/input_videos/Caitlin Clark clip.mp4" --model yolo26m.pt
+```
+
+Weights auto-download on first use. Model metadata lives in `src/yolo_config.py` and applies to the Streamlit pipeline too.
+
+### Quality mode (default)
+
+**Quality mode is ON by default** — it favors detection quality and tracking-readiness over raw speed:
+
+| Setting | Quality mode | Speed mode (`--fast`) |
+|---------|--------------|----------------------|
+| `imgsz` | 1280 (or 1920) | 640 |
+| Primary confidence | 0.25 | 0.35 |
+| Augmentation | Yes | No |
+| IoU | 0.45 | 0.50 |
+
+Inference runs at a **review floor** of `conf=0.15` so distant or partially occluded players are captured. Detections are then split:
+
+- **Primary** (`conf >= 0.25` in quality mode): drawn on video, written to main CSV and ByteTrack export
+- **Review** (`0.15 <= conf < 0.25`): logged to `low_confidence_candidates.csv` only (not drawn)
+
+Quality mode is slower but preferred for ByteTrack, jersey-number OCR, and player identification prep.
+
+CLI examples:
+
+```text
+python src/player_labeling.py "data/input_videos/Caitlin Clark clip.mp4"
+python src/player_labeling.py "data/input_videos/Caitlin Clark clip.mp4" --imgsz 1920
+python src/player_labeling.py "data/input_videos/Caitlin Clark clip.mp4" --fast
+```
+
+On an **RTX 3070 Ti**, start at `imgsz=1280`. Try `--imgsz 1920` if VRAM allows; if CUDA runs out of memory, retry at 1280.
+
+The Streamlit intake UI includes a **Quality mode** checkbox and **imgsz** selector in the sidebar (same settings as CLI).
+
+### Outputs
+
+| File | Purpose |
+|------|---------|
+| `outputs/annotated_videos/<name>_labeled_players.mp4` | Video with Player_1, Player_2, ... boxes (primary detections only) |
+| `outputs/detections/<name>_player_labels.csv` | Per-frame box coordinates, confidence, and `class_id` |
+| `outputs/detections/<name>_bytetrack_detections.csv` | ByteTrack-ready feed: `frame,class_id,confidence,x1,y1,x2,y2` |
+| `outputs/detections/<name>_frame_statistics.csv` | Per-frame player count and confidence stats |
+| `outputs/detections/<name>_low_confidence_candidates.csv` | Review-tier boxes (0.15–0.25 conf in quality mode) |
+
+At the end of each run, timing metrics are printed: total runtime, average inference ms/frame, and pipeline FPS.
+
+Labels are per-frame only (no cross-frame tracking yet). Phase 2 will add ByteTrack.
 
 ### GPU acceleration (recommended)
 
@@ -156,21 +215,23 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_
 Then run labeling (auto-uses GPU when available):
 
 ```text
-python src/player_labeling.py data/input_videos/caitlin_clark_clip.mp4
+python src/player_labeling.py "data/input_videos/Caitlin Clark clip.mp4"
 ```
 
 Force CPU if needed:
 
 ```text
-python src/player_labeling.py data/input_videos/caitlin_clark_clip.mp4 --device cpu
+python src/player_labeling.py "data/input_videos/Caitlin Clark clip.mp4" --device cpu
 ```
 
 ## What's next
 
+- `src/yolo_config.py` — YOLO26 model settings (ready)
 - `src/video_intake_filter.py` — pre-processing validation gate (ready)
+- `src/player_labeling.py` — YOLO26 player detection (ready)
 - `app/video_upload_filter.py` — Streamlit upload UI (ready)
 - `src/track_players.py` — player tracking (placeholder)
 - `src/utils.py` — shared helpers (placeholder)
 - `app/dashboard.py` — results dashboard (placeholder)
 
-YOLO detection and tracking are not wired up yet. The intake filter runs before those steps.
+Tracking is not wired up yet. The intake filter runs before YOLO26 labeling.

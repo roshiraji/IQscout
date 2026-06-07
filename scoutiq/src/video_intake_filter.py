@@ -4,7 +4,7 @@ Video Intake Filter — quality-control gate before the vision pipeline.
 Validates uploaded basketball footage (MP4) for format, size, duration,
 resolution, and readability. Does NOT run YOLO or tracking.
 
-Future flow: upload → validate_video() → if approved → process_video.py → YOLO → tracking
+Future flow: upload → validate_video() → if approved → player_labeling.py (YOLO26) → tracking
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 opencv-python
-ultralytics
+ultralytics>=8.4.60
 torch
 torchvision
 torchaudio
