@@ -1,4 +1,6 @@
+.venv/
 scoutiq/.venv/
+scoutiq/.venv-gui/
 **/__pycache__/
 *.pyc
 .DS_Store

@@ -15,6 +15,29 @@
       "justMyCode": true
     },
     {
+      "name": "Video Intake Filter (Desktop GUI)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scoutiq/app/video_intake_gui.py",
+      "python": "${workspaceFolder}/scoutiq/.venv-gui/Scripts/python.exe",
+      "cwd": "${workspaceFolder}/scoutiq",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Video Intake Filter (Streamlit)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "streamlit",
+      "args": [
+        "run",
+        "app/video_upload_filter.py"
+      ],
+      "cwd": "${workspaceFolder}/scoutiq",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
       "name": "Process video (pick file)",
       "type": "debugpy",
       "request": "launch",

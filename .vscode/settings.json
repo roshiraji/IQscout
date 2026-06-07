@@ -1,4 +1,9 @@
 {
   "python.defaultInterpreterPath": "${workspaceFolder}/scoutiq/.venv/Scripts/python.exe",
-  "python.terminal.activateEnvironment": true
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/scoutiq/.venv/Lib/site-packages",
+    "${workspaceFolder}/scoutiq/src"
+  ],
+  "python.analysis.diagnosticMode": "workspace"
 }
