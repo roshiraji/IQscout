@@ -74,8 +74,17 @@ You should see printed metadata: FPS, width, height, and frame count.
 Before any YOLO or tracking runs, upload and validate basketball MP4 clips through the Streamlit intake UI. With the virtual environment activated, from the `scoutiq/` folder:
 
 ```text
+.\run_streamlit.ps1
+```
+
+Or:
+
+```text
+.\.venv\Scripts\activate
 streamlit run app/video_upload_filter.py
 ```
+
+**Important:** Run Streamlit from `scoutiq/.venv`, not the workspace-root `.venv`. The root environment has CPU-only PyTorch and will show `YOLO will run on: CPU`.
 
 The app will:
 
@@ -111,7 +120,50 @@ Click **Select Video File**, choose an MP4 in File Explorer, and view approval s
 
 **If no window appears:** make sure you are not using a Python install without Tkinter/Tcl. Run `.\run_gui.bat` instead of `python app/video_intake_gui.py` directly.
 
-**Future pipeline flow:** upload → validate → if approved → `process_video.py` → YOLO → tracking → dashboard
+**Future pipeline flow:** upload → validate → if approved → `player_labeling.py` → tracking → dashboard
+
+## Player labeling (YOLO)
+
+After a clip passes intake validation, label detected players with YOLOv8. From the `scoutiq/` folder:
+
+```text
+python src/player_labeling.py data/input_videos/caitlin_clark_clip.mp4
+```
+
+Outputs:
+
+- `outputs/annotated_videos/<name>_labeled_players.mp4` — video with Player_1, Player_2, ... boxes
+- `outputs/detections/<name>_player_labels.csv` — per-frame box coordinates and confidence
+
+Labels are per-frame only (no cross-frame tracking yet).
+
+### GPU acceleration (recommended)
+
+Your machine has an NVIDIA GPU, but the default `pip install torch` build is CPU-only. To enable GPU inference, reinstall PyTorch with CUDA from the `scoutiq/` folder:
+
+```powershell
+.\.venv\Scripts\activate
+pip uninstall -y torch torchvision torchaudio
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+
+Verify GPU support:
+
+```powershell
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+Then run labeling (auto-uses GPU when available):
+
+```text
+python src/player_labeling.py data/input_videos/caitlin_clark_clip.mp4
+```
+
+Force CPU if needed:
+
+```text
+python src/player_labeling.py data/input_videos/caitlin_clark_clip.mp4 --device cpu
+```
 
 ## What's next
 

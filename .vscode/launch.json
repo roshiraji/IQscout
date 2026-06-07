@@ -3,6 +3,18 @@
   "configurations": [
   
     {
+      "name": "Player labeling (YOLO)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scoutiq/src/player_labeling.py",
+      "args": [
+        "data/input_videos/caitlin_clark_clip.mp4"
+      ],
+      "cwd": "${workspaceFolder}/scoutiq",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
       "name": "Process sample WNBA clip",
       "type": "debugpy",
       "request": "launch",
@@ -33,6 +45,7 @@
         "run",
         "app/video_upload_filter.py"
       ],
+      "python": "${workspaceFolder}/scoutiq/.venv/Scripts/python.exe",
       "cwd": "${workspaceFolder}/scoutiq",
       "console": "integratedTerminal",
       "justMyCode": true

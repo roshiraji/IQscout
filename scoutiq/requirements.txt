@@ -12,6 +12,7 @@ filterpy
 lap
 supervision
 streamlit
+imageio-ffmpeg
 fastapi
 uvicorn
 python-multipart

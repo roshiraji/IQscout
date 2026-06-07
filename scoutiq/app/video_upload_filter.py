@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import streamlit as st
+import torch
 
 # Allow imports from src/ when Streamlit runs this file directly
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -18,6 +19,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from player_labeling import describe_device, resolve_device, run_player_labeling  # noqa: E402
 from video_intake_filter import save_intake_report, validate_video  # noqa: E402
 
 INPUT_DIR = PROJECT_ROOT / "data" / "input_videos"
@@ -57,7 +59,46 @@ def _render_metadata(metadata: dict) -> None:
     col9.metric("MIME Type", metadata.get("mime_type") or "unknown")
 
 
-def _render_decision(result: dict, report_path: Path) -> None:
+def _render_labeling_results(labeling_result: dict) -> None:
+    """Show YOLO player labeling outputs after the vision pipeline runs."""
+    st.divider()
+    st.subheader("Vision Pipeline Results")
+
+    st.success("Player labeling complete.")
+    col1, col2 = st.columns(2)
+    col1.metric("Frames processed", labeling_result["frames_processed"])
+    col2.metric("Total player detections", labeling_result["total_detections"])
+
+    st.markdown(f"**Device used:** {labeling_result.get('device_label', 'unknown')}")
+    st.markdown(f"**Annotated video:** `{labeling_result['annotated_video']}`")
+    st.markdown(f"**Detection CSV:** `{labeling_result['detections_csv']}`")
+
+    annotated_path = Path(str(labeling_result["annotated_video"]))
+    csv_path = Path(str(labeling_result["detections_csv"]))
+
+    st.markdown("### Watch annotated clip")
+    if annotated_path.is_file() and annotated_path.stat().st_size > 0:
+        video_bytes = annotated_path.read_bytes()
+        st.video(video_bytes, format="video/mp4")
+        st.download_button(
+            label="Download annotated MP4",
+            data=video_bytes,
+            file_name=annotated_path.name,
+            mime="video/mp4",
+        )
+    else:
+        st.error("Annotated video was not found. Try running the pipeline again.")
+
+    if csv_path.is_file():
+        st.download_button(
+            label="Download detection CSV",
+            data=csv_path.read_bytes(),
+            file_name=csv_path.name,
+            mime="text/csv",
+        )
+
+
+def _render_decision(result: dict, report_path: Path, saved_path: Path) -> None:
     """Show approved / rejected status, warnings, errors, and next-step state."""
     st.divider()
     st.subheader("Intake Decision")
@@ -79,14 +120,38 @@ def _render_decision(result: dict, report_path: Path) -> None:
 
     st.caption(f"Intake report saved to: `{report_path}`")
 
-    # Next-step gate — only enabled when the video passes validation
+    # Next-step gate — runs YOLO player labeling when the user proceeds
     st.divider()
     if result["usable"]:
         st.info("Ready for Processing — this video can move forward to the ScoutIQ vision pipeline.")
-        st.button("Proceed to Vision Pipeline", type="primary", disabled=False)
+        device_label = describe_device(resolve_device())
+        st.caption(f"YOLO will run on: {device_label}")
+        if st.button("Proceed to Vision Pipeline", type="primary"):
+            with st.spinner(f"Running YOLO player labeling on {device_label}..."):
+                try:
+                    labeling_result = run_player_labeling(saved_path)
+                    st.session_state["labeling_result"] = labeling_result
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Player labeling failed: {exc}")
+                    st.exception(exc)
     else:
         st.info("Not Ready for Processing — fix the issues above before running any AI models.")
         st.button("Proceed to Vision Pipeline", type="primary", disabled=True)
+
+
+def _render_device_banner() -> None:
+    """Warn when Streamlit is running with CPU-only PyTorch (wrong venv)."""
+    device_label = describe_device(resolve_device())
+    if torch.cuda.is_available():
+        st.caption(f"Compute device: {device_label}")
+        return
+
+    st.warning(
+        "YOLO is running on **CPU** because this Streamlit session is not using "
+        "`scoutiq/.venv` with CUDA PyTorch. Stop Streamlit and restart with:\n\n"
+        "`cd scoutiq` then `.\\run_streamlit.ps1`"
+    )
 
 
 def main() -> None:
@@ -95,6 +160,7 @@ def main() -> None:
     _ensure_directories()
 
     st.title("ScoutIQ Video Intake Filter")
+    _render_device_banner()
     st.markdown(
         "Upload a WNBA/NBA basketball **MP4** clip. "
         "The file will be checked for format, size, duration, resolution, and readability "
@@ -111,6 +177,11 @@ def main() -> None:
         st.info("Upload an MP4 video to begin the intake check.")
         return
 
+    # Clear prior labeling results when a different file is uploaded
+    if st.session_state.get("last_upload") != uploaded_file.name:
+        st.session_state["last_upload"] = uploaded_file.name
+        st.session_state.pop("labeling_result", None)
+
     # Run validation inside try/except so a bad upload never crashes the UI
     try:
         saved_path = _save_uploaded_file(uploaded_file)
@@ -125,7 +196,10 @@ def main() -> None:
             )
 
         _render_metadata(result["metadata"])
-        _render_decision(result, report_path)
+        _render_decision(result, report_path, saved_path)
+
+        if st.session_state.get("labeling_result"):
+            _render_labeling_results(st.session_state["labeling_result"])
 
     except Exception as exc:
         st.error("An unexpected error occurred while validating the upload.")
