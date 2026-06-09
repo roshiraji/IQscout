@@ -151,7 +151,7 @@ def _sort_detections_left_to_right(boxes: list[dict]) -> list[dict]:
 
 
 def _parse_person_boxes(result) -> list[dict]:
-    """Parse all person detections from one YOLO result (already filtered at review floor)."""
+    """Parse likely on-court player detections from one YOLO result."""
     detections: list[dict] = []
 
     if result.boxes is None:
@@ -166,6 +166,27 @@ def _parse_person_boxes(result) -> list[dict]:
 
         x1, y1, x2, y2 = box.xyxy[0].tolist()
         x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+
+        box_width = x2 - x1
+        box_height = y2 - y1
+        box_area = box_width * box_height
+
+        # Filter out low-confidence people, usually audience/background
+        if confidence < 0.50:
+            continue
+
+        # Filter out small background people
+        if box_area < 3500:
+            continue
+
+        # Ignore upper crowd/bench area
+        if y2 < 220:
+            continue
+
+        # Ignore bottom crowd/scoreboard area
+        if y1 > 610:
+            continue
+
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
 
@@ -180,8 +201,9 @@ def _parse_person_boxes(result) -> list[dict]:
                 "y2": y2,
                 "center_x": round(center_x, 2),
                 "center_y": round(center_y, 2),
-                "box_width": x2 - x1,
-                "box_height": y2 - y1,
+                "box_width": box_width,
+                "box_height": box_height,
+                "box_area": box_area,
             }
         )
 
@@ -387,6 +409,10 @@ def process_video(
 
         all_boxes = _parse_person_boxes(results[0])
         primary, review = _split_detections(all_boxes, inference_profile.conf)
+
+        # Keep only the largest likely on-court players per frame
+        primary = sorted(primary, key=lambda d: d["box_area"], reverse=True)[:12]
+        primary = _sort_detections_left_to_right(primary)
 
         frame_stat_rows.append(_frame_statistics_row(frame_number, primary))
 
