@@ -21,23 +21,20 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Dependencies
-        working-directory: ./scoutiq
+      - name: Upgrade Pip
         run: |
           python -m pip install --upgrade pip
+
+      - name: Install Project Dependencies
+        working-directory: ./scoutiq
+        run: |
           pip install -r requirements.txt
 
-      - name: Verify Python Scripts Compile
+      - name: Verify All Python Files Compile
         working-directory: ./scoutiq
         run: |
-          python -m py_compile src/process_video.py
-          python -m py_compile src/player_labeling.py
-          python -m py_compile src/track_players.py
+          python -m compileall src app
 
-      - name: Verify Dashboard Compiles
-        working-directory: ./scoutiq
+      - name: Display Success Message
         run: |
-          python -m py_compile app/dashboard.py
-
-      - name: Success
-        run: echo "ScoutIQ CI passed!"
+          echo "ScoutIQ CI completed successfully!"
