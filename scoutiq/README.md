@@ -335,3 +335,59 @@ Launcher settings live in `scripts/runtime_config.json`.
 - `app/dashboard.py` — legacy results dashboard (placeholder)
 
 Intake validation, YOLO labeling, snapshot selection, and ByteTrack tracking are wired through the React + FastAPI stack.
+
+
+## WNBA Player Database
+
+### Overview
+
+This component builds a local SQLite database of WNBA player and roster information using the SportsDataverse WNBA API.
+
+### Purpose
+
+The player database is intended to support:
+
+* Player search and lookup
+* Jersey number matching
+* Team roster information
+* Future FastAPI endpoints
+* Future RAG (Retrieval-Augmented Generation) functionality
+
+### Data Source
+
+SportsDataverse:
+
+```python
+from sportsdataverse.wnba import (
+    espn_wnba_teams_site,
+    espn_wnba_team_roster,
+)
+```
+
+### Current Status
+
+Implemented:
+
+* Pull all WNBA teams
+* Pull roster data for each team
+* Store player information in SQLite
+
+Database output:
+
+```text
+outputs/wnba_players.db
+```
+
+Implementation file:
+
+```text
+src/wnba_player_database.py
+```
+
+### Next Steps
+
+* Add FastAPI endpoints
+* Connect player search to React dashboard
+* Add player profile pages
+* Build RAG layer for player information retrieval
+

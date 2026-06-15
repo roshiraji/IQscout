@@ -7,3 +7,4 @@ outputs/**/*
 !outputs/**/.gitkeep
 *.mp4
 *.pt
+outputs/wnba_players.db
