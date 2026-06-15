@@ -1,0 +1,22 @@
+{
+  "react": {
+    "enabled": true,
+    "directory": "FrontEnd",
+    "port": 5173
+  },
+  "streamlit": {
+    "enabled": false,
+    "script": "app/video_upload_filter.py",
+    "port": 8501
+  },
+  "fastapi": {
+    "enabled": true,
+    "module": "app.api_server:app",
+    "port": 8000
+  },
+  "browser": {
+    "open_react": true,
+    "open_streamlit": false,
+    "open_fastapi_docs": false
+  }
+}

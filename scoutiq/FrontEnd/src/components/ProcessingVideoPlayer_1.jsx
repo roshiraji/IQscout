@@ -1,10 +1,21 @@
-function ProcessingVideoPlayer_1() {
+function ProcessingVideoPlayer({ videoUrl }) {
+  if (!videoUrl) {
+    return (
+      <div className="video-panel">
+        <h2>Processed Video</h2>
+        <p>No processed video yet. Upload and analyze an approved clip.</p>
+      </div>
+    );
+  }
+
   return (
-    <div>
+    <div className="video-panel">
       <h2>Processed Video</h2>
-      <p>No processed video yet.</p>
+      <video controls width="100%" preload="metadata" playsInline src={videoUrl}>
+        Your browser does not support video playback.
+      </video>
     </div>
   );
 }
 
-export default ProcessingVideoPlayer_1;
+export default ProcessingVideoPlayer;

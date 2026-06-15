@@ -19,7 +19,7 @@ except ImportError as exc:
         "ERROR: Tkinter is not available in this Python environment.\n"
         "On Windows, run the GUI with the project launcher instead:\n"
         "  .\\.venv-gui\\Scripts\\python.exe app\\video_intake_gui.py\n"
-        "Or from scoutiq/:  .\\run_gui.bat"
+        "Or from scoutiq/:  .\\run_gui.ps1"
     )
     raise SystemExit(1) from exc
 

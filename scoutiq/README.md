@@ -1,6 +1,48 @@
 # ScoutIQ / VisionPlay AI MVP
 
-Beginner-friendly Python project for processing WNBA MP4 video clips with OpenCV, YOLO, and tracking tools. This MVP stage sets up dependencies and a simple video metadata script. YOLO detection and tracking are not wired up yet.
+Beginner-friendly Python project for processing WNBA MP4 video clips with OpenCV, YOLO, and tracking tools. The React dashboard and FastAPI backend drive the main workflow; Streamlit remains available as an optional legacy UI.
+
+## Build log — 6/15/2026
+
+Summary of work completed on this date:
+
+### Environment and launcher
+- Set up `scoutiq/.venv` on a new machine with CUDA PyTorch (`torch 2.6.0+cu124`) for RTX 3070
+- Replaced the old Streamlit-only launcher with a unified **`run_scoutiq.bat`** / **`stop_scoutiq.bat`** stack
+- Added `scripts/runtime_config.json`, `check_environment.ps1`, `start_services.ps1`, and `stop_services.ps1`
+- Default startup is now **React (port 5173) + FastAPI (port 8000)**; Streamlit (8501) is opt-in via config
+- Removed legacy launchers: `run_gui.bat`, `run_streamlit.bat`, and related one-off scripts
+
+### FastAPI backend (`app/api_server.py`)
+- `POST /api/analyze` — video intake validation, player snapshot, optional labeling
+- `POST /api/tracking/selection` — saves user player picks and runs ByteTrack tracking
+- `GET /api/files/snapshot/`, `/heatmap/`, `/annotated/`, `/tracking/` — serve outputs to the React UI
+- `GET /api/health` — reports available pipeline features
+
+### React dashboard (`FrontEnd/`)
+- Upload → Analyze → click `Player_#` boxes → Confirm tracking flow on `Dashboard.jsx`
+- New components: `PlayerSnapshotSelector`, `TrackingResults`, updated `VideoUpload` and `ProcessingStatus`
+- Vite proxies `/api` to `http://localhost:8000`
+- Fixed blank-page crash (`isSaving` prop missing in `VideoUpload.jsx`)
+
+### Vision pipeline
+- **`src/player_snapshot_selector.py`** — samples frames, picks best snapshot, exports JPG + JSON
+- **`src/track_players.py`** — YOLO + ByteTrack; locks onto user-selected players from snapshot frame
+- **`src/heatmap.py`** — heatmap generation wired into analyze flow
+- **`src/video_encoding.py`** — re-encodes OpenCV `mp4v` output to **H.264** for in-browser `<video>` playback
+- Bug fix: restored path variables in `player_labeling.py` (`annotated_path` NameError)
+- Bug fix: disabled `augment=True` for YOLO26 in `yolo_config.py` (YOLO11 only)
+
+### Outputs added this build
+| Path | Purpose |
+|------|---------|
+| `outputs/player_snapshots/` | Best-frame JPG + player box JSON |
+| `outputs/tracking_selections/` | User selection JSON per clip |
+| `outputs/tracking/` | Per-player position CSV + summary JSON |
+| `outputs/tracking_videos/` | Tracked-players preview MP4 (H.264) |
+
+### Verified on test clip
+`data/input_videos/Caitlin Clark clip.mp4` — intake, snapshot selection, and tracking preview (3/4 players anchored; `Player_6` failed IoU match at snapshot frame).
 
 ## Project structure
 
@@ -71,13 +113,13 @@ You should see printed metadata: FPS, width, height, and frame count.
 
 ## Video Intake Filter (upload gate)
 
-Before any YOLO or tracking runs, upload and validate basketball MP4 clips through the Streamlit intake UI. With the virtual environment activated, from the `scoutiq/` folder:
+Before any YOLO or tracking runs, upload and validate basketball MP4 clips through the Streamlit intake UI. The easiest way to start it:
 
 ```text
-.\run_streamlit.ps1
+.\run_scoutiq.bat
 ```
 
-Or:
+Or with the virtual environment activated, from the `scoutiq/` folder:
 
 ```text
 .\.venv\Scripts\activate
@@ -104,12 +146,6 @@ python src/video_intake_filter.py data/input_videos/sample_wnba_clip.mp4
 
 For a simple file-picker window (no terminal path typing), from the `scoutiq/` folder:
 
-```text
-.\run_gui.bat
-```
-
-Or in PowerShell:
-
 ```powershell
 .\run_gui.ps1
 ```
@@ -118,7 +154,7 @@ This uses `scoutiq/.venv-gui` (Python 3.12), which includes working Tkinter on W
 
 Click **Select Video File**, choose an MP4 in File Explorer, and view approval status, metadata, and the saved JSON report.
 
-**If no window appears:** make sure you are not using a Python install without Tkinter/Tcl. Run `.\run_gui.bat` instead of `python app/video_intake_gui.py` directly.
+**If no window appears:** make sure you are not using a Python install without Tkinter/Tcl. Use `.\run_gui.ps1` instead of `python app/video_intake_gui.py` directly.
 
 **Future pipeline flow:** upload → validate → if approved → `player_labeling.py` → tracking → dashboard
 
@@ -224,14 +260,78 @@ Force CPU if needed:
 python src/player_labeling.py "data/input_videos/Caitlin Clark clip.mp4" --device cpu
 ```
 
+## Local Development Launcher
+
+Start every local ScoutIQ service from one place instead of opening multiple terminals.
+
+### Start everything
+
+Double-click:
+
+```
+run_scoutiq.bat
+```
+
+Or from Command Prompt / PowerShell inside the `scoutiq/` folder:
+
+```cmd
+.\run_scoutiq.bat
+```
+
+The launcher will:
+
+- Verify `.venv\Scripts\python.exe` exists
+- Check required folders and Python packages (`cv2`, `fastapi`, `uvicorn`, `ultralytics`)
+- Install React dependencies on first run (`FrontEnd/node_modules`) if Node.js is available
+- Start the **FastAPI backend** on port **8000**
+- Start the **React dashboard** (Vite) on port **5173**
+- Open **http://localhost:5173** in your browser
+- Keep one command window open until you press **Ctrl+C** or close the window
+
+Optional: set `"streamlit": { "enabled": true }` in `scripts/runtime_config.json` to also run the legacy Streamlit UI on port **8501**.
+
+### Stop everything
+
+Double-click:
+
+```
+stop_scoutiq.bat
+```
+
+Or run:
+
+```cmd
+.\stop_scoutiq.bat
+```
+
+This terminates React/FastAPI/Streamlit processes started by the launcher, frees ports **5173**, **5174**, **8501**, and **8000**, and removes `.scoutiq_runtime/pids.json`.
+
+### Services started
+
+| Service | Port | URL |
+|---------|------|-----|
+| React dashboard (default) | 5173 | http://localhost:5173 |
+| FastAPI backend | 8000 | http://localhost:8000/api/health |
+| Streamlit (optional, legacy) | 8501 | http://localhost:8501 |
+
+Runtime process IDs are stored in `.scoutiq_runtime/pids.json`. Service logs are written to `.scoutiq_runtime/react.log`, `.scoutiq_runtime/fastapi.log`, and `.scoutiq_runtime/streamlit.log` when enabled.
+
+### Troubleshooting
+
+- **Missing dependencies:** activate `.venv` and run `pip install -r requirements.txt`
+- **React won't start:** install [Node.js](https://nodejs.org/), then `cd FrontEnd && npm install`
+- **Ports stuck / orphaned servers:** run `stop_scoutiq.bat`
+- **Wrong Cursor interpreter:** select `.venv\Scripts\python.exe` in the IDE Python interpreter picker
+- **Legacy Streamlit UI:** set `streamlit.enabled` to `true` in `scripts/runtime_config.json`
+
+Launcher settings live in `scripts/runtime_config.json`.
+
 ## What's next
 
-- `src/yolo_config.py` — YOLO26 model settings (ready)
-- `src/video_intake_filter.py` — pre-processing validation gate (ready)
-- `src/player_labeling.py` — YOLO26 player detection (ready)
-- `app/video_upload_filter.py` — Streamlit upload UI (ready)
-- `src/track_players.py` — player tracking (placeholder)
+- Jersey number recognition and persistent player identity across frames
+- Spacing, speed, and defensive-pressure metrics from tracking CSV
+- Heatmap and full labeling on the React dashboard after tracking confirm
 - `src/utils.py` — shared helpers (placeholder)
-- `app/dashboard.py` — results dashboard (placeholder)
+- `app/dashboard.py` — legacy results dashboard (placeholder)
 
-Tracking is not wired up yet. The intake filter runs before YOLO26 labeling.
+Intake validation, YOLO labeling, snapshot selection, and ByteTrack tracking are wired through the React + FastAPI stack.

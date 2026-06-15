@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import subprocess
+from video_encoding import encode_for_browser
 import sys
 import time
 from dataclasses import dataclass
@@ -261,46 +261,6 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def _encode_for_browser(video_path: Path) -> Path:
-    """Re-encode the annotated MP4 to H.264 for browser and Streamlit playback."""
-    try:
-        import imageio_ffmpeg
-    except ImportError:
-        print("Note: install imageio-ffmpeg for in-browser video playback.")
-        return video_path
-
-    temp_path = video_path.with_suffix(".browser.mp4")
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-
-    result = subprocess.run(
-        [
-            ffmpeg_exe,
-            "-y",
-            "-i",
-            str(video_path),
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            str(temp_path),
-        ],
-        capture_output=True,
-        text=True,
-    )
-
-    if result.returncode == 0 and temp_path.is_file() and temp_path.stat().st_size > 0:
-        video_path.unlink()
-        temp_path.rename(video_path)
-        print("Encoded annotated video for browser playback (H.264).")
-    else:
-        temp_path.unlink(missing_ok=True)
-        print("Warning: Browser video encoding failed; Streamlit playback may not work.")
-
-    return video_path
-
-
 def _draw_labels(frame, detections: list[dict]) -> None:
     """Draw bounding boxes and Player_N labels on a single frame."""
     for index, det in enumerate(detections, start=1):
@@ -352,7 +312,7 @@ def process_video(
     ANNOTATED_DIR.mkdir(parents=True, exist_ok=True)
     DETECTIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-    inference_profile = profile or get_inference_profile()
+    inference_profile = profile or get_inference_profile(model_name=model_name)
 
     cap = cv2.VideoCapture(str(metadata.path))
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -469,7 +429,7 @@ def process_video(
     writer.release()
     total_runtime = time.perf_counter() - pipeline_start
 
-    _encode_for_browser(annotated_path)
+    encode_for_browser(annotated_path)
 
     _write_csv(
         player_labels_path,
@@ -547,7 +507,8 @@ def run_player_labeling(
     path = Path(video_path)
     metadata = get_video_metadata(path)
     inference_device = resolve_device(device)
-    profile = get_inference_profile(quality_mode=quality_mode, imgsz=imgsz)
+    weights = model_name or DEFAULT_YOLO_MODEL
+    profile = get_inference_profile(quality_mode=quality_mode, imgsz=imgsz, model_name=weights)
 
     stem = path.stem
     annotated_path = ANNOTATED_DIR / f"{stem}_labeled_players.mp4"
@@ -556,7 +517,6 @@ def run_player_labeling(
     frame_stats_path = DETECTIONS_DIR / f"{stem}_frame_statistics.csv"
     low_conf_path = DETECTIONS_DIR / f"{stem}_low_confidence_candidates.csv"
 
-    weights = model_name or DEFAULT_YOLO_MODEL
     yolo_model = model or load_yolo_model(weights)
     stats = process_video(
         metadata,
@@ -645,7 +605,9 @@ def main() -> None:
 
     video_path = Path(args.video_path)
     device = resolve_device(args.device)
-    profile = get_inference_profile(quality_mode=quality_mode, imgsz=args.imgsz)
+    profile = get_inference_profile(
+        quality_mode=quality_mode, imgsz=args.imgsz, model_name=args.model
+    )
 
     metadata = validate_video_path(video_path)
     print_metadata(metadata)
