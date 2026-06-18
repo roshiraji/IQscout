@@ -136,14 +136,17 @@ class InferenceProfile:
 def get_inference_profile(
     quality_mode: bool | None = None,
     imgsz: int | None = None,
+    model_name: str | None = None,
 ) -> InferenceProfile:
     """
     Build inference settings from quality/speed mode.
 
-    Quality mode (default): higher resolution, lower conf, TTA, stricter NMS.
+    Quality mode (default): higher resolution, lower conf, stricter NMS.
+    Test-time augmentation is enabled only for YOLO11 (YOLO26 does not support it).
     Speed mode: smaller imgsz, higher conf, no augmentation.
     """
     use_quality = QUALITY_MODE if quality_mode is None else quality_mode
+    model_family = get_model_option(model_name).family
 
     if use_quality:
         resolved_imgsz = imgsz if imgsz is not None else 1280
@@ -157,7 +160,7 @@ def get_inference_profile(
             quality_mode=True,
             imgsz=resolved_imgsz,
             conf=0.25,
-            augment=True,
+            augment=model_family == "YOLO11",
             iou=0.45,
         )
 
