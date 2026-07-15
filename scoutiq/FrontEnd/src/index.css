@@ -186,6 +186,78 @@ button:disabled {
   white-space: nowrap;
 }
 
+.team-legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.team-legend-chip {
+  border: 2px solid;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f4f4f4;
+}
+
+.snapshot-view-toggle {
+  display: inline-flex;
+  gap: 0;
+  margin: 10px 0 12px;
+  border: 1px solid #2b2b2b;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.view-toggle-btn {
+  background: #171717;
+  color: #cfcfcf;
+  border: none;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.view-toggle-btn + .view-toggle-btn {
+  border-left: 1px solid #2b2b2b;
+}
+
+.view-toggle-btn-active {
+  background: #00d26a;
+  color: #0a0a0a;
+}
+
+.view-toggle-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.isolate-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 10px;
+  color: #bdbdbd;
+  font-size: 12px;
+}
+
+.isolate-progress progress {
+  width: 150px;
+  height: 7px;
+  accent-color: #00d26a;
+}
+
+.player-box-hit-only {
+  background: transparent;
+}
+
+.player-box-hit-only:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .player-chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -225,6 +297,34 @@ button:disabled {
   border-color: #28553a;
 }
 
+.tracking-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.tracking-panel-header h2 {
+  margin: 0;
+}
+
+.secondary-button {
+  background: transparent;
+  color: #f4f4f4;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondary-button:hover {
+  border-color: #00d26a;
+  color: #00d26a;
+}
+
 .tracking-warning {
   margin-top: 10px;
   color: #ffd67d;
@@ -232,6 +332,61 @@ button:disabled {
 
 .tracking-next-step {
   margin-top: 12px;
+}
+
+.coach-insights-panel {
+  border-color: #3a4a6b;
+}
+
+.coach-pair-label {
+  margin: 8px 0 4px;
+  font-weight: 700;
+  color: #f4f4f4;
+}
+
+.coach-glance-grid {
+  margin-top: 8px;
+}
+
+.coach-narrative {
+  margin-top: 14px;
+  line-height: 1.45;
+  color: #e2e2e2;
+  background: #141820;
+  border: 1px solid #2a3348;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.coach-details {
+  margin-top: 12px;
+  color: #cfcfcf;
+}
+
+.coach-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.coach-detail-block {
+  margin-top: 8px;
+}
+
+.coach-detail-block h3 {
+  margin: 10px 0 4px;
+  font-size: 14px;
+  color: #f0f0f0;
+}
+
+.coach-detail-block ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.coach-detail-block li {
+  margin: 4px 0;
+  font-size: 13px;
+  color: #cfcfcf;
 }
 
 .video-panel video {
@@ -275,4 +430,3 @@ th {
     padding: 24px 14px 34px;
   }
 }
-

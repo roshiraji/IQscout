@@ -34,16 +34,22 @@ Grounding DINO / SAM2 at inference. Config: `configs/player_tracking_mvp.yaml`
 
 Flow when a user uploads a clip:
 
-1. `POST /api/analyze` → intake validation + player snapshot (existing).
-2. **Auto-Track All Players** button → `POST /api/track/auto` with `{video_path}`.
-3. Backend `src/pipeline/player_track_pipeline.py`:
-   streams frames → `detect_players_seg` (player-only YOLO-seg) → exclusions
-   (soft-fail to defaults) → ByteTrack (`update_tracker`) → semi-transparent
-   masks + bbox + track-ID overlay → browser-safe H.264.
-4. Outputs land in the existing dirs and are served over existing endpoints:
-   - `outputs/tracking_videos/<clip>_seg_tracked.mp4` → `GET /api/files/tracking/<name>`
-   - `outputs/tracking/<clip>_seg_tracks.csv` + `_seg_tracking_summary.json`
-   - `outputs/player_snapshots/<clip>_seg_snapshot.jpg`
+1. `POST /api/analyze` validates the upload and returns a background `job_id`.
+2. `GET /api/jobs/<job_id>` reports frame progress while one isolated
+   `ObjectTracker` (ByteTrack) processes the full clip from frame 0.
+3. `src/pipeline/player_track_pipeline.py` writes canonical artifacts under
+   `outputs/jobs/<job_id>/`, then `src/pipeline/tracklet_stitcher.py` merges
+   short raw tracklets into stable `person_group_id`s using temporal gap,
+   spatial proximity, jersey-color histograms, and optional OSNet appearance.
+4. Artifacts include `tracks.csv` / `tracks.jsonl.gz` (with `person_group_id`),
+   `person_groups.json`, all-player H.264, `quality.json`, and a snapshot whose
+   selectable units are **Person #** groups (not ephemeral ByteTrack IDs).
+5. The user selects person groups. `POST /api/tracking/selection` filters member
+   tracklets for those groups and renders `focused_players.mp4` from frame 0 →
+   EOF; it does **not** run YOLO or ByteTrack again (`canonical_reuse=true`).
+6. `identity_attachments.json` provides safe `pending/unresolved/resolved`
+   fields keyed by person group. Future roster/OCR/ReID stages attach evidence;
+   tracking never invents player names.
 
 Smoke test without the UI (from `scoutiq/`):
 
@@ -52,9 +58,66 @@ Smoke test without the UI (from `scoutiq/`):
   --video "path\to\clip.mp4" --max-frames 60
 ```
 
-The run logs `weights=…/best_player_seg.pt` so you can confirm the deployed
-model is in use. Optional `--focus Player_3 Player_7` highlights a subset;
-`AutoTrackRequest.focus_labels` exposes the same over the API.
+The run logs `weights=…/best_player_seg.pt` and `raw=N groups=M` so you can
+confirm stitching reduced fragmented IDs.
+
+### Continuity + retention (selling-point metric)
+
+- **Problem ByteTrack alone solves poorly:** one player becomes many short
+  tracklets after occlusions/cuts, so selecting `Track #N` only overlays while
+  that ephemeral ID exists.
+- **Stitching:** raw `track_id`s are kept for debug; `person_group_id` is the
+  product identity. Config under `tracker:` / `stitch:` in
+  `configs/player_tracking_mvp.yaml`.
+- **`selected_player_retention`** = frames with ≥1 selected person group /
+  `source_frame_count`. Shown in the dashboard TrackingResults panel and in
+  `selection_summary.json` / focused `quality` block after Confirm.
+- Also reported: `unique_raw_tracks` vs `unique_person_groups`, and
+  `average_id_switches_per_person` pre vs post stitch.
+
+### Focused preview + isolate (after Confirm)
+
+Confirm reuses canonical `tracks.jsonl.gz` (no second YOLO/ByteTrack pass).
+The normal focused clip returns first; a CPU background worker then builds the
+higher-quality isolate while the dashboard polls real progress + ETA:
+
+| Artifact | Behavior |
+|----------|----------|
+| `focused_players.mp4` | Full scene + selected overlays (boxes, tinted masks, labels) |
+| `focused_isolated.mp4` | Full scene; **non-selected** masks are reconstructed from feature-aligned clean pixels in nearby frames, with Navier-Stokes fallback only for uncovered pixels; court/hoop/crowd and selected players remain |
+
+Dashboard toggle **Full scene | Isolate** switches the preview `src` (same
+cache-bust `?v=&g=` as Confirm). Isolate stays disabled with percentage and ETA
+until `isolate_status.json` reports ready. A new Confirm supersedes the older
+background generation. Coach insights / CSV are unchanged.
+
+### Coach insights (after Confirm, ≥2 players)
+
+Confirm requires **at least two** person groups. After focused render,
+`src/pipeline/coach_insights.py` computes clip proxies from
+`selected_tracks.csv` centers (no ball / OCR / court feet):
+
+| Layer | Metrics |
+|-------|---------|
+| Single-player | coverage trust, path length, mean/p90 speed, high-effort fraction |
+| Pair | both-visible %, separation bands, closeout bursts, chase role (opp), sticky matchup (opp), screen-shape soft label (same team), cut-timing overlap |
+
+Artifacts: `outputs/jobs/<job_id>/coach_insights.json` (also on the tracking
+API payload as `coach_insights` + `coach_narrative`). The dashboard shows
+glance cards + a plain-language narrative under TrackingResults.
+
+**Non-goals this stage:** ball tracking, shot make/miss, named identity,
+calibrated feet/s, help/rotation without a ball model. Speeds/distances are
+normalized to the frame diagonal.
+
+### Full-clip quality gate
+
+`quality.json` reports detector confidence separately from tracking continuity:
+frame coverage, short-track ratio, per-track gaps, camera cuts, and stitch
+compression. Thresholds live under `quality:` in
+`configs/player_tracking_mvp.yaml`. A detection gate failure calls for held-out
+mask/recall review; a continuity failure calls for stitch/tracker tuning — not
+automatic retraining of `best_player_seg.pt`.
 
 ## Layout
 

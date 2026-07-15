@@ -16,6 +16,15 @@ function Stop-ProcessSafe {
         return $false
     }
 
+    # Uvicorn --reload creates a wrapper -> reloader -> worker tree. Stopping
+    # only the launcher PID can leave inherited port-8000 listeners alive and
+    # cause requests to alternate between old and new API code.
+    $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" `
+        -ErrorAction SilentlyContinue
+    foreach ($child in $children) {
+        Stop-ProcessSafe -ProcessId ([int]$child.ProcessId) -Label "$Label child" | Out-Null
+    }
+
     $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
     if (-not $proc) {
         return $false

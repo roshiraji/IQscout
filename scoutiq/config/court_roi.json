@@ -1,0 +1,7 @@
+{
+  "image": "",
+  "width": 0,
+  "height": 0,
+  "polygon": [],
+  "note": "Run: python src/main.py set-roi --image data/frames/frame_000001.jpg"
+}

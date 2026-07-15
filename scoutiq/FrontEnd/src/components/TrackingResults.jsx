@@ -1,59 +1,204 @@
-function TrackingResults({ tracking, videoUrl }) {
+import { useState } from "react";
+import CoachInsights from "./CoachInsights";
+
+function formatEta(seconds) {
+  if (seconds == null || !Number.isFinite(Number(seconds))) return "estimating…";
+  const value = Math.max(0, Math.round(Number(seconds)));
+  if (value < 60) return `~${value}s`;
+  return `~${Math.ceil(value / 60)}m`;
+}
+
+function TrackingResults({
+  tracking,
+  videoUrl,
+  isolatedVideoUrl,
+  isolateStatus,
+  onNewSelection,
+}) {
+  const [previewMode, setPreviewMode] = useState("full"); // "full" | "isolate"
+
   if (!tracking) {
     return null;
   }
 
   const trackLabels = Object.keys(tracking.track_mapping || {});
   const isAuto = tracking.auto_tracked === true;
+  const reusedCanonical = tracking.canonical_reuse === true;
+  const retention = tracking.selected_player_retention
+    ?? tracking.quality?.selected_player_retention
+    ?? tracking.frame_coverage
+    ?? 0;
+  const rawTracks = tracking.unique_raw_tracks
+    ?? tracking.quality?.unique_raw_tracks;
+  const personGroups = tracking.unique_person_groups
+    ?? tracking.quality?.unique_person_groups;
+  const isolationAvailable =
+    Boolean(isolatedVideoUrl) && tracking.isolation_available !== false;
+  const isolateBusy = ["queued", "processing"].includes(isolateStatus?.status);
+  const isolateProgress = Math.round((isolateStatus?.progress || 0) * 100);
+  const isolateButtonLabel = isolateBusy
+    ? `Isolate · ${isolateProgress > 0 ? `${isolateProgress}%` : formatEta(isolateStatus?.eta_seconds)}`
+    : "Isolate";
+  const activeVideoUrl =
+    previewMode === "isolate" && isolationAvailable ? isolatedVideoUrl : videoUrl;
 
   return (
-    <div className="card tracking-panel">
-      <h2>Player Tracking</h2>
-      <p className="status-text">
-        {isAuto
-          ? `Auto-tracked ${trackLabels.length} player(s) with the segmentation model (${tracking.model || "best_player_seg.pt"}) across the clip.`
-          : `Following ${trackLabels.join(", ")} from frame ${tracking.snapshot_frame_number} through the end of the clip, with segmentation masks from ${tracking.model || "best_player_seg.pt"}.`}
-      </p>
+    <>
+      <div className="card tracking-panel">
+        <div className="tracking-panel-header">
+          <h2>Player Tracking</h2>
+          {typeof onNewSelection === "function" && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onNewSelection}
+            >
+              New selection
+            </button>
+          )}
+        </div>
+        <p className="status-text">
+          {reusedCanonical
+            ? `Following ${trackLabels.join(", ")} across the full clip via stitched person groups. Change the snapshot checkboxes and Confirm again to rebuild this focused preview — no full Analyze rerun.`
+            : isAuto
+            ? `Auto-tracked ${trackLabels.length} player(s) with the segmentation model (${tracking.model || "best_player_seg.pt"}) across the clip.`
+            : `Following ${trackLabels.join(", ")} from frame ${tracking.snapshot_frame_number} through the end of the clip, with segmentation masks from ${tracking.model || "best_player_seg.pt"}.`}
+        </p>
 
-      <div className="metadata-grid">
-        <div>
-          <strong>Players tracked</strong>
-          <span>{trackLabels.length}</span>
+        <div className="metadata-grid">
+          <div>
+            <strong>Selected-player retention</strong>
+            <span>{Math.round(retention * 100)}%</span>
+          </div>
+          <div>
+            <strong>Players tracked</strong>
+            <span>{trackLabels.length}</span>
+          </div>
+          <div>
+            <strong>Frames tracked</strong>
+            <span>
+              {tracking.frames_tracked}
+              {tracking.source_frame_count ? ` / ${tracking.source_frame_count}` : ""}
+            </span>
+          </div>
+          <div>
+            <strong>Position samples</strong>
+            <span>{tracking.total_positions}</span>
+          </div>
+          {(rawTracks != null || personGroups != null) && (
+            <div>
+              <strong>Raw tracks → groups</strong>
+              <span>
+                {rawTracks ?? "—"} → {personGroups ?? "—"}
+              </span>
+            </div>
+          )}
+          <div>
+            <strong>Runtime</strong>
+            <span>{tracking.total_runtime_seconds}s</span>
+          </div>
         </div>
-        <div>
-          <strong>Frames tracked</strong>
-          <span>{tracking.frames_tracked}</span>
-        </div>
-        <div>
-          <strong>Position samples</strong>
-          <span>{tracking.total_positions}</span>
-        </div>
-        <div>
-          <strong>Runtime</strong>
-          <span>{tracking.total_runtime_seconds}s</span>
-        </div>
+
+        {tracking.unmatched_labels?.length > 0 && (
+          <p className="tracking-warning">
+            Could not anchor: {tracking.unmatched_labels.join(", ")} at the snapshot frame.
+          </p>
+        )}
+
+        {tracking.quality?.canonical_fragmentation_warning && (
+          <p className="tracking-warning">
+            Some raw ByteTrack tracklets were short or crossed a camera cut. Stitched
+            person groups are used for selection when available.
+          </p>
+        )}
+
+        {tracking.quality?.gate && !tracking.quality.gate.passed && (
+          <p className="tracking-warning">
+            Quality gate: {tracking.quality.gate.limiting_factor}.{" "}
+            {tracking.quality.gate.recommendation}
+          </p>
+        )}
+
+        {videoUrl && (
+          <div className="video-panel nested-video-panel">
+            <h3>Tracked Players Preview</h3>
+            <div
+              className="snapshot-view-toggle"
+              role="group"
+              aria-label="Focused preview mode"
+            >
+              <button
+                type="button"
+                className={`view-toggle-btn ${previewMode === "full" ? "view-toggle-btn-active" : ""}`}
+                onClick={() => setPreviewMode("full")}
+              >
+                Full scene
+              </button>
+              <button
+                type="button"
+                className={`view-toggle-btn ${previewMode === "isolate" ? "view-toggle-btn-active" : ""}`}
+                onClick={() => isolationAvailable && setPreviewMode("isolate")}
+                disabled={!isolationAvailable}
+                title={
+                  isolationAvailable
+                    ? "Isolate removes everyone except the selected players — court, hoop, and crowd stay visible."
+                    : isolateStatus?.status === "failed"
+                    ? isolateStatus.error || "Isolate processing failed. Re-Confirm to retry."
+                    : isolateBusy
+                    ? `Building a cleaner temporal background (${isolateProgress}%, ${formatEta(isolateStatus?.eta_seconds)} remaining).`
+                    : "Re-Confirm to generate isolated preview."
+                }
+              >
+                {isolateButtonLabel}
+              </button>
+            </div>
+            {isolateBusy && (
+              <div className="isolate-progress" role="status" aria-live="polite">
+                <progress
+                  value={isolateStatus?.progress || 0}
+                  max="1"
+                  aria-label="Isolate processing progress"
+                />
+                <span>
+                  Building cleaner background · {isolateProgress}% ·{" "}
+                  {formatEta(isolateStatus?.eta_seconds)} remaining
+                </span>
+              </div>
+            )}
+            {isolateStatus?.status === "failed" && (
+              <p className="tracking-warning">
+                Isolate processing failed: {isolateStatus.error || "Re-Confirm to retry."}
+              </p>
+            )}
+            <p className="status-text">
+              Isolate removes non-selected players so the court, hoop, and crowd
+              stay in view. It aligns nearby clean frames in the background to
+              reduce smears and translucent blobs.
+            </p>
+            <video
+              key={activeVideoUrl}
+              controls
+              width="100%"
+              preload="metadata"
+              playsInline
+              src={activeVideoUrl}
+            >
+              Your browser does not support video playback.
+            </video>
+          </div>
+        )}
+
+        <p className="status-text tracking-next-step">
+          Retention is frames with at least one selected person / source frame count —
+          the continuity selling point. Detection confidence is separate from identity lock.
+        </p>
       </div>
 
-      {tracking.unmatched_labels?.length > 0 && (
-        <p className="tracking-warning">
-          Could not anchor: {tracking.unmatched_labels.join(", ")} at the snapshot frame.
-        </p>
-      )}
-
-      {videoUrl && (
-        <div className="video-panel nested-video-panel">
-          <h3>Tracked Players Preview</h3>
-          <video controls width="100%" preload="metadata" playsInline src={videoUrl}>
-            Your browser does not support video playback.
-          </video>
-        </div>
-      )}
-
-      <p className="status-text tracking-next-step">
-        Tracking CSV saved for future metrics: movement path, speed, spacing, screens, and
-        defensive pressure.
-      </p>
-    </div>
+      <CoachInsights
+        insights={tracking.coach_insights}
+        narrative={tracking.coach_narrative}
+      />
+    </>
   );
 }
 

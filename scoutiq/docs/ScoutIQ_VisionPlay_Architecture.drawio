@@ -1,0 +1,246 @@
+<mxfile host="app.diagrams.net" modified="2026-07-14T23:30:00.000Z" agent="Cursor" version="24.7.17" type="device">
+  <diagram id="scoutiq-architecture" name="ScoutIQ Architecture">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title" value="ScoutIQ VisionPlay — Current Dashboard Architecture (July 14, 2026)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#E8EAED;" vertex="1" parent="1">
+          <mxGeometry x="30" y="15" width="1200" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="One canonical GPU pass → stable person groups → focused outputs → asynchronous temporal isolate reconstruction" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;fontColor=#9AA0A6;" vertex="1" parent="1">
+          <mxGeometry x="30" y="48" width="1200" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="lane-ui" value="REACT DASHBOARD :5173" style="swimlane;html=1;startSize=34;horizontal=1;rounded=1;fillColor=#152238;swimlaneFillColor=#0E1626;strokeColor=#4C78A8;fontColor=#FFFFFF;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="30" y="90" width="300" height="850" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-api" value="FASTAPI :8000" style="swimlane;html=1;startSize=34;horizontal=1;rounded=1;fillColor=#18392B;swimlaneFillColor=#10271E;strokeColor=#45A36A;fontColor=#FFFFFF;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="360" y="90" width="300" height="850" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-workers" value="PROCESSING WORKERS" style="swimlane;html=1;startSize=34;horizontal=1;rounded=1;fillColor=#3A2A17;swimlaneFillColor=#291D10;strokeColor=#E59F3A;fontColor=#FFFFFF;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="690" y="90" width="430" height="850" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-artifacts" value="DURABLE JOB ARTIFACTS" style="swimlane;html=1;startSize=34;horizontal=1;rounded=1;fillColor=#34203F;swimlaneFillColor=#25172D;strokeColor=#9D6BB3;fontColor=#FFFFFF;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1150" y="90" width="390" height="850" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ui-upload" value="VideoUpload&#xa;MP4 + game context" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9EAF7;strokeColor=#4C78A8;fontColor=#172B3A;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="65" y="145" width="230" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-status" value="ProcessingStatus&#xa;canonical stage + progress" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9EAF7;strokeColor=#4C78A8;fontColor=#172B3A;" vertex="1" parent="1">
+          <mxGeometry x="65" y="260" width="230" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-snapshot" value="PlayerSnapshotSelector&#xa;stable groups + team colors&#xa;Boxes / Segmentation toggle" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9EAF7;strokeColor=#4C78A8;fontColor=#172B3A;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="65" y="375" width="230" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-confirm" value="Confirm ≥2 players&#xa;selected person_group_id[]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B7E4C7;strokeColor=#45A36A;fontColor=#153523;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="65" y="500" width="230" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-results" value="TrackingResults&#xa;Full scene / Isolate&#xa;cache-busted video source" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9EAF7;strokeColor=#4C78A8;fontColor=#172B3A;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="65" y="630" width="230" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-isolate-status" value="Isolate disabled while queued&#xa;live percentage + ETA&#xa;enabled when artifact is ready" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontColor=#4D3B00;" vertex="1" parent="1">
+          <mxGeometry x="65" y="745" width="230" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-coach" value="CoachInsights&#xa;glance cards + narrative" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#33223B;" vertex="1" parent="1">
+          <mxGeometry x="65" y="855" width="230" height="55" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="api-analyze" value="POST /api/analyze&#xa;validate + submit canonical job" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#45A36A;fontColor=#173B25;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="395" y="145" width="230" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-job" value="GET /api/jobs/{job_id}&#xa;poll job.json" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#45A36A;fontColor=#173B25;" vertex="1" parent="1">
+          <mxGeometry x="395" y="260" width="230" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-files" value="GET /api/jobs/{id}/files/{kind}&#xa;no-store for rewritten artifacts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#45A36A;fontColor=#173B25;" vertex="1" parent="1">
+          <mxGeometry x="395" y="375" width="230" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-selection" value="POST /api/tracking/selection&#xa;save selection + focused render&#xa;queue isolate generation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B7E4C7;strokeColor=#45A36A;fontColor=#153523;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="395" y="500" width="230" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-isolate" value="GET /api/jobs/{id}/isolate-status&#xa;stage + progress + ETA + error" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontColor=#4D3B00;" vertex="1" parent="1">
+          <mxGeometry x="395" y="745" width="230" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-health" value="GET /api/health&#xa;service + feature availability" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#45A36A;fontColor=#173B25;" vertex="1" parent="1">
+          <mxGeometry x="395" y="855" width="230" height="55" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="gpu-queue" value="TrackingJobManager&#xa;single canonical GPU queue" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontColor=#4A3100;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="730" y="135" width="170" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="validate" value="Intake validation&#xa;MP4 / duration / FPS / size" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8D5;strokeColor=#E59F3A;fontColor=#4A2C0A;" vertex="1" parent="1">
+          <mxGeometry x="930" y="135" width="155" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="yolo" value="best_player_seg.pt&#xa;YOLO segmentation&#xa;mask_polygon + bbox + confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontColor=#4A1715;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="730" y="245" width="170" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="bytetrack" value="ByteTrack&#xa;raw track_id association" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8D5;strokeColor=#E59F3A;fontColor=#4A2C0A;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="930" y="255" width="155" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="stitcher" value="Tracklet stitcher&#xa;time + spatial + jersey color&#xa;+ optional appearance&#xa;→ stable person_group_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontColor=#4D3B00;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="730" y="365" width="170" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="team-colors" value="Jersey team colors&#xa;overlay colors + neutral officials" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontColor=#4D3B00;" vertex="1" parent="1">
+          <mxGeometry x="930" y="375" width="155" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="snapshot-quality" value="Dense snapshot + quality gates&#xa;detector quality separated from&#xa;continuity quality" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8D5;strokeColor=#E59F3A;fontColor=#4A2C0A;" vertex="1" parent="1">
+          <mxGeometry x="730" y="500" width="355" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="focused-render" value="Focused Confirm render&#xa;filter canonical person groups&#xa;selected overlays + CSV" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B7E4C7;strokeColor=#45A36A;fontColor=#153523;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="730" y="625" width="170" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="coach-worker" value="Coach Insights&#xa;movement + pair proxies&#xa;plain-language narrative" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#33223B;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="930" y="625" width="155" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="isolate-queue" value="Independent CPU isolate queue&#xa;generation-aware cancellation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontColor=#4D3B00;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="730" y="745" width="170" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="temporal-render" value="Temporal isolate renderer&#xa;ORB scene features&#xa;robust affine alignment&#xa;clean-neighbor reconstruction&#xa;Navier-Stokes fallback" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontColor=#4A3100;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="930" y="735" width="155" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="ffmpeg" value="Browser encoding&#xa;H.264 + yuv420p + faststart&#xa;soft-fail safety" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8D5;strokeColor=#E59F3A;fontColor=#4A2C0A;" vertex="1" parent="1">
+          <mxGeometry x="730" y="865" width="355" height="55" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="artifact-job" value="job.json&#xa;canonical queue state" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#33223B;" vertex="1" parent="1">
+          <mxGeometry x="1185" y="140" width="145" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact-canonical" value="Canonical artifacts&#xa;tracks.jsonl.gz&#xa;tracks.csv / quality.json" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#33223B;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="135" width="145" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact-groups" value="person_groups.json&#xa;raw track → stable group&#xa;team metadata" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#33223B;" vertex="1" parent="1">
+          <mxGeometry x="1185" y="265" width="145" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact-snapshot" value="snapshot.jpg&#xa;snapshot_masks.jpg" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#33223B;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="270" width="145" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact-selection" value="selection.json&#xa;selection_summary.json" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#33223B;" vertex="1" parent="1">
+          <mxGeometry x="1185" y="500" width="145" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact-focused" value="focused_players.mp4&#xa;selected_tracks.csv" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#D5E8D4;strokeColor=#45A36A;fontColor=#173B25;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="620" width="145" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact-coach" value="coach_insights.json&#xa;metrics + narrative" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#E1D5E7;strokeColor=#9673A6;fontColor=#33223B;" vertex="1" parent="1">
+          <mxGeometry x="1185" y="625" width="145" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact-isolate-status" value="isolate_status.json&#xa;generation / progress / ETA" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#FFF2CC;strokeColor=#D6B656;fontColor=#4D3B00;" vertex="1" parent="1">
+          <mxGeometry x="1185" y="755" width="145" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact-isolate" value="focused_isolated.mp4&#xa;scene preserved&#xa;non-selected players removed" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#FFF2CC;strokeColor=#D6B656;fontColor=#4D3B00;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="745" width="145" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact-root" value="outputs/jobs/&lt;job_id&gt;/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#666666;fontColor=#333333;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1185" y="865" width="320" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="offline" value="OFFLINE / NON-LIVE TOOLS: GroundingDINO • SAM / SAM2 • dataset generation • annotation review • training loop&#xa;These tools can improve datasets and weights, but are not called by the React Analyze or Confirm path." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#666666;dashed=1;fontColor=#333333;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="360" y="970" width="1180" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend" value="Blue: UI   Green: API / focused path   Orange: processing   Purple: artifacts   Yellow: isolate / stable identity" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#202124;strokeColor=#5F6368;fontColor=#E8EAED;" vertex="1" parent="1">
+          <mxGeometry x="30" y="970" width="300" height="70" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e-upload-api" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C78A8;strokeWidth=2;endArrow=block;" edge="1" parent="1" source="ui-upload" target="api-analyze">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-api-queue" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#45A36A;strokeWidth=2;endArrow=block;" edge="1" parent="1" source="api-analyze" target="gpu-queue">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-queue-validate" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#E59F3A;endArrow=block;" edge="1" parent="1" source="gpu-queue" target="validate">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-validate-yolo" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#E59F3A;endArrow=block;" edge="1" parent="1" source="validate" target="yolo">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-yolo-byte" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#E59F3A;endArrow=block;" edge="1" parent="1" source="yolo" target="bytetrack">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-byte-stitch" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#E59F3A;endArrow=block;" edge="1" parent="1" source="bytetrack" target="stitcher">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-stitch-team" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;endArrow=block;" edge="1" parent="1" source="stitcher" target="team-colors">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-team-snapshot" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#E59F3A;endArrow=block;" edge="1" parent="1" source="team-colors" target="snapshot-quality">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-job-artifact" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9D6BB3;endArrow=block;" edge="1" parent="1" source="gpu-queue" target="artifact-job">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-canonical-artifacts" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9D6BB3;strokeWidth=2;endArrow=block;" edge="1" parent="1" source="snapshot-quality" target="artifact-canonical">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-stitch-groups" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9D6BB3;endArrow=block;" edge="1" parent="1" source="stitcher" target="artifact-groups">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-snapshot-artifact" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9D6BB3;endArrow=block;" edge="1" parent="1" source="snapshot-quality" target="artifact-snapshot">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-job-poll" value="1 s poll" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4C78A8;dashed=1;endArrow=block;" edge="1" parent="1" source="ui-status" target="api-job">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-api-file-snapshot" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9D6BB3;endArrow=block;" edge="1" parent="1" source="artifact-snapshot" target="api-files">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-files-ui-snapshot" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4C78A8;endArrow=block;" edge="1" parent="1" source="api-files" target="ui-snapshot">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-confirm-selection" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#45A36A;strokeWidth=2;endArrow=block;" edge="1" parent="1" source="ui-confirm" target="api-selection">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-selection-focused" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#45A36A;strokeWidth=2;endArrow=block;" edge="1" parent="1" source="api-selection" target="focused-render">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-focused-coach" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673A6;endArrow=block;" edge="1" parent="1" source="focused-render" target="coach-worker">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-focused-artifact" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#45A36A;endArrow=block;" edge="1" parent="1" source="focused-render" target="artifact-focused">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-coach-artifact" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673A6;endArrow=block;" edge="1" parent="1" source="coach-worker" target="artifact-coach">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-selection-artifact" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9D6BB3;endArrow=block;" edge="1" parent="1" source="api-selection" target="artifact-selection">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-selection-isolate-queue" value="non-blocking" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;strokeWidth=2;endArrow=block;" edge="1" parent="1" source="api-selection" target="isolate-queue">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-isolate-temporal" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;strokeWidth=2;endArrow=block;" edge="1" parent="1" source="isolate-queue" target="temporal-render">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-temporal-status" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;endArrow=block;" edge="1" parent="1" source="temporal-render" target="artifact-isolate-status">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-temporal-encode" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#E59F3A;endArrow=block;" edge="1" parent="1" source="temporal-render" target="ffmpeg">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-encode-isolate" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;strokeWidth=2;endArrow=block;" edge="1" parent="1" source="ffmpeg" target="artifact-isolate">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-isolate-poll" value="1 s poll" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;dashed=1;endArrow=block;" edge="1" parent="1" source="ui-isolate-status" target="api-isolate">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-status-api" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;endArrow=block;" edge="1" parent="1" source="artifact-isolate-status" target="api-isolate">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-artifact-files" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9D6BB3;endArrow=block;" edge="1" parent="1" source="artifact-focused" target="api-files">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-isolate-files" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;endArrow=block;" edge="1" parent="1" source="artifact-isolate" target="api-files">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-files-results" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4C78A8;strokeWidth=2;endArrow=block;" edge="1" parent="1" source="api-files" target="ui-results">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-coach-ui" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673A6;endArrow=block;" edge="1" parent="1" source="artifact-coach" target="ui-coach">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-artifact-root" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9D6BB3;dashed=1;endArrow=none;" edge="1" parent="1" source="artifact-root" target="artifact-selection">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

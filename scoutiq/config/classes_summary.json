@@ -1,0 +1,12 @@
+{
+  "enabled_for_training": [
+    "player",
+    "referee",
+    "ball",
+    "hoop"
+  ],
+  "ignored_by_default": [
+    "crowd",
+    "bench_players"
+  ]
+}

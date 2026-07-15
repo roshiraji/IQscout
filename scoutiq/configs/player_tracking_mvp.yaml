@@ -1,15 +1,12 @@
 # Live user-facing player tracking (React dashboard + FastAPI).
 #
-# This drives the ONLINE path: user uploads a clip -> best_player_seg.pt
-# (player-only YOLO-seg) -> exclusions -> ByteTrack -> masks + bbox + stable
-# track IDs -> browser-safe H.264 preview. NO Grounding DINO / SAM2 here.
-#
-# Consumed by src/pipeline/player_track_pipeline.py (imported by app/api_server.py).
+# Online path: upload → best_player_seg.pt → ByteTrack → tracklet stitch
+# (stable person_group_id) → select → focused H.264. NO GDINO/SAM2.
 
 # Trained showcase weights (relative to scoutiq/).
 weights: outputs/training_loop/best_player_seg.pt
 
-# Detection thresholds (defaults match configs/showcase_player_seg.yaml).
+# Detection thresholds.
 conf: 0.25
 iou: 0.70
 
@@ -26,3 +23,39 @@ min_track_frames: 3
 
 # Smoke-test cap; null processes the whole clip.
 max_frames: null
+
+# Online tracker (isolated per job). bytetrack is the default; botsort is
+# reserved for a future optional path. Continuity is primarily improved by
+# stitching after the full pass.
+tracker:
+  tracker_type: bytetrack
+  track_activation_threshold: 0.25
+  lost_track_buffer: 60
+  minimum_matching_threshold: 0.75
+
+# Post-pass tracklet stitching → stable person_group_id.
+stitch:
+  enabled: true
+  max_gap_seconds: 1.5
+  max_center_distance_ratio: 0.18   # fraction of frame diagonal
+  color_weight: 0.65
+  appearance_weight: 0.35          # used when OSNet/torchreid is available
+  spatial_weight: 0.25
+  min_merge_score: 0.55
+  min_group_frames: 8
+  keyframe_samples: 3
+  use_osnet: true                  # soft-fail to color-only if unavailable
+
+# Jersey-color team buckets for snapshot selection + later metrics.
+# Clusters visible players into ~2 teams (e.g. red vs blue) on a dense frame.
+jersey_teams:
+  enabled: true
+  top_frame_fraction: 0.92
+  max_candidate_frames: 12
+
+# Full-clip quality gates (detector vs tracker continuity).
+quality:
+  min_frame_coverage: 0.90
+  min_mean_detection_confidence: 0.50
+  max_short_track_ratio: 0.35
+  max_track_gap_frames: 30

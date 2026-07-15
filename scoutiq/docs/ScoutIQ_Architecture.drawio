@@ -1,0 +1,286 @@
+<mxfile host="app.diagrams.net" modified="2026-07-14T02:15:00.000Z" agent="Cursor" version="24.0.0" type="device">
+  <diagram id="scoutiq-arch" name="ScoutIQ VisionPlay Architecture">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1600" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- ===================== TITLE ===================== -->
+        <mxCell id="title" value="ScoutIQ VisionPlay — Full Architecture (July 14, 2026)&#xa;Live Dashboard · Showcase Train · Models · Fusion · Identity" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=22;fontStyle=1;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="900" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LANE: FRONTEND ===================== -->
+        <mxCell id="lane_ui" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;dashed=0;opacity=30;" vertex="1" parent="1">
+          <mxGeometry x="40" y="90" width="520" height="260" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane_ui_label" value="FRONTEND / PRESENTERS" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=1;fontSize=13;fontColor=#1A5276;" vertex="1" parent="1">
+          <mxGeometry x="50" y="95" width="240" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="react" value="React Dashboard&#xa;(Vite 8 + React 19)&#xa;FrontEnd/ · :5173&#xa;&#xa;VideoUpload · ProcessingStatus&#xa;PlayerSnapshotSelector&#xa;TrackingResults + Isolate ETA&#xa;CoachInsights" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1A5276;fontColor=#FFFFFF;strokeColor=#154360;fontStyle=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="60" y="130" width="220" height="180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="streamlit" value="Streamlit UI&#xa;(optional)&#xa;:8501&#xa;video_upload_filter.py" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#AED6F1;strokeColor=#5DADE2;fontColor=#1A5276;" vertex="1" parent="1">
+          <mxGeometry x="300" y="140" width="160" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tkinter" value="Tkinter GUI&#xa;video_intake_gui.py" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#AED6F1;strokeColor=#5DADE2;fontColor=#1A5276;" vertex="1" parent="1">
+          <mxGeometry x="300" y="240" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="sam_demo" value="Meta SAM ONNX demo&#xa;demo/ (vendor only)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5B7B1;strokeColor=#C0392B;fontColor=#7B241C;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="480" y="140" width="70" height="160" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LANE: API ===================== -->
+        <mxCell id="lane_api" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5F5E3;strokeColor=#82E0AA;opacity=30;" vertex="1" parent="1">
+          <mxGeometry x="580" y="90" width="280" height="260" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane_api_label" value="API LAYER" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=1;fontSize=13;fontColor=#145A32;" vertex="1" parent="1">
+          <mxGeometry x="590" y="95" width="160" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="fastapi" value="FastAPI Dashboard API&#xa;app/api_server.py · :8000&#xa;&#xa;POST /api/analyze&#xa;GET /api/jobs/{id}&#xa;POST /api/tracking/selection&#xa;GET /isolate-status + /files/{kind}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#196F3D;fontColor=#FFFFFF;strokeColor=#145A32;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="600" y="130" width="240" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="id_api" value="Identity API&#xa;src/api/app.py&#xa;search / clips" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#82E0AA;strokeColor=#196F3D;fontColor=#145A32;" vertex="1" parent="1">
+          <mxGeometry x="600" y="280" width="240" height="55" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LANE: MVP PIPELINE ===================== -->
+        <mxCell id="lane_mvp" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCF3CF;strokeColor=#F9E79F;opacity=30;" vertex="1" parent="1">
+          <mxGeometry x="40" y="380" width="820" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane_mvp_label" value="LIVE REACT VISION PIPELINE  ·  one canonical GPU pass + asynchronous CPU isolate" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=1;fontSize=13;fontColor=#7D6608;" vertex="1" parent="1">
+          <mxGeometry x="50" y="385" width="400" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="mvp1" value="1. Intake + queue&#xa;video validation&#xa;job.json progress&#xa;TrackingJobManager" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4D03F;strokeColor=#B7950B;fontColor=#7D6608;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="430" width="140" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="mvp2" value="2. Canonical pass&#xa;best_player_seg.pt&#xa;mask polygons&#xa;ByteTrack raw IDs&#xa;tracks.jsonl.gz" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4D03F;strokeColor=#B7950B;fontColor=#7D6608;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="230" y="430" width="150" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="mvp3" value="3. Stable selection&#xa;tracklet stitching&#xa;person_group_id&#xa;team colors + snapshot" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4D03F;strokeColor=#B7950B;fontColor=#7D6608;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="410" y="430" width="130" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="mvp4" value="4. Confirm&#xa;reuse canonical tracks&#xa;focused H.264 + CSV&#xa;Coach Insights&#xa;no detector rerun" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4D03F;strokeColor=#B7950B;fontColor=#7D6608;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="570" y="430" width="140" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="mvp5" value="5. Async Isolate&#xa;CPU queue + ETA&#xa;temporal frame alignment&#xa;remove non-selected players&#xa;preserve scene" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCF3CF;strokeColor=#B7950B;fontColor=#7D6608;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="740" y="430" width="100" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LANE: SHOWCASE ===================== -->
+        <mxCell id="lane_show" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAD7A0;strokeColor=#E67E22;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="40" y="610" width="1240" height="220" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane_show_label" value="SHOWCASE FACTORY → TRAIN → DEMO  ·  python -m src.showcase  (highlights → best_player_seg.pt)" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=1;fontSize=13;fontColor=#935116;" vertex="1" parent="1">
+          <mxGeometry x="50" y="615" width="700" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="sh_src" value="Highlight MP4s&#xa;Fever vs Sparks&#xa;Fever vs Mercury" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E67E22;fontColor=#FFFFFF;strokeColor=#A04000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="660" width="120" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="sh_ingest" value="ingest&#xa;frames + manifest.csv&#xa;holdout gate&#xa;exclusions&#xa;data/frames/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EB984E;fontColor=#FFFFFF;strokeColor=#A04000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="210" y="660" width="130" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="sh_auto" value="autolabel&#xa;GDINO boxes&#xa;→ SAM2 masks&#xa;→ YOLO-seg labels&#xa;outputs/auto_labels/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EB984E;fontColor=#FFFFFF;strokeColor=#A04000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="370" y="660" width="150" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="sh_ds" value="build-dataset&#xa;nba_player_seg&#xa;train / val&#xa;data.yaml&#xa;nc=1 player" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EB984E;fontColor=#FFFFFF;strokeColor=#A04000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="550" y="660" width="130" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="sh_train" value="train&#xa;yolo11n-seg.pt&#xa;Ultralytics&#xa;GPU 0 (3070 Ti)&#xa;→ best_player_seg.pt" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D35400;fontColor=#FFFFFF;strokeColor=#A04000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="710" y="660" width="150" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="sh_run" value="run showcase&#xa;NO GDINO&#xa;YOLO-seg + ByteTrack&#xa;outputs/showcase/&#xa;unseen_showcase.mp4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EB984E;fontColor=#FFFFFF;strokeColor=#A04000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="890" y="660" width="160" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="sh_cfg" value="Configs&#xa;showcase_ingest.yaml&#xa;showcase_train.yaml&#xa;showcase_player_seg.yaml" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDEBD0;strokeColor=#E67E22;fontColor=#935116;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="660" width="180" height="130" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LANE: FUSION ===================== -->
+        <mxCell id="lane_fus" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8DAEF;strokeColor=#AF7AC5;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="40" y="860" width="820" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane_fus_label" value="FUSION PIPELINE  ·  python -m src.fusion.run_pipeline" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=1;fontSize=13;fontColor=#6C3483;" vertex="1" parent="1">
+          <mxGeometry x="50" y="865" width="420" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="fu_vid" value="Video" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#8E44AD;fontColor=#FFFFFF;strokeColor=#6C3483;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="910" width="80" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="fu_yolo" value="Trained YOLO&#xa;best_player_&#xa;detector.pt" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#A569BD;fontColor=#FFFFFF;strokeColor=#6C3483;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="170" y="910" width="120" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="fu_gdino" value="Grounding&#xa;DINO&#xa;(prompts)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#A569BD;fontColor=#FFFFFF;strokeColor=#6C3483;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="910" width="110" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="fu_fuse" value="detection_fusion&#xa;NMS + ROI&#xa;confidence fuse" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7D3C98;fontColor=#FFFFFF;strokeColor=#6C3483;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="910" width="130" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="fu_sam" value="SAM2 refine&#xa;sam2_segmenter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#A569BD;fontColor=#FFFFFF;strokeColor=#6C3483;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="620" y="910" width="110" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="fu_trk" value="ByteTrack&#xa;+ overlay MP4&#xa;player_tracking/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#A569BD;fontColor=#FFFFFF;strokeColor=#6C3483;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="760" y="910" width="80" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LANE: IDENTITY ===================== -->
+        <mxCell id="lane_id" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D1F2EB;strokeColor=#76D7C4;opacity=35;" vertex="1" parent="1">
+          <mxGeometry x="890" y="860" width="430" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane_id_label" value="IDENTITY / RESOLVER" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=1;fontSize=13;fontColor=#0E6655;" vertex="1" parent="1">
+          <mxGeometry x="900" y="865" width="220" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="id1" value="BoT-SORT&#xa;track.run" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1ABC9C;fontColor=#FFFFFF;strokeColor=#0E6655;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="910" y="910" width="90" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="id2" value="crops · OCR&#xa;face · ReID&#xa;embeds" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#48C9B0;fontColor=#FFFFFF;strokeColor=#0E6655;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="910" width="100" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="id3" value="resolve_game&#xa;+ SportsDataverse&#xa;rosters&#xa;→ clips" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#16A085;fontColor=#FFFFFF;strokeColor=#0E6655;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="910" width="150" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LANE: MODELS ===================== -->
+        <mxCell id="lane_mod" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F2F3F4;strokeColor=#85929E;opacity=40;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1090" width="1280" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane_mod_label" value="MODELS &amp; WEIGHTS" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=1;fontSize=13;fontColor=#2C3E50;" vertex="1" parent="1">
+          <mxGeometry x="50" y="1095" width="220" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="m_yolo" value="YOLO11 / YOLO26&#xa;detect&#xa;yolo11*.pt · yolo26*.pt&#xa;MVP labeling &amp; snapshot" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#566573;fontColor=#FFFFFF;strokeColor=#2C3E50;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1135" width="170" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_yoloseg" value="YOLO11n-seg&#xa;fine-tuned&#xa;best_player_seg.pt&#xa;outputs/training_loop/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D35400;fontColor=#FFFFFF;strokeColor=#A04000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="250" y="1135" width="170" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_det" value="YOLO11n detect&#xa;NBA loop&#xa;best_player_detector.pt&#xa;outputs/nba_training_loop/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#8E44AD;fontColor=#FFFFFF;strokeColor=#6C3483;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="440" y="1135" width="180" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_gdino" value="Grounding DINO&#xa;SwinT-OGC&#xa;weights/groundingdino_&#xa;swint_ogc.pth&#xa;label factory + fusion" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2980B9;fontColor=#FFFFFF;strokeColor=#1A5276;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="640" y="1135" width="170" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_sam2" value="SAM2.1-B&#xa;sam2.1_b.pt&#xa;Ultralytics SAM&#xa;mask refine" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#27AE60;fontColor=#FFFFFF;strokeColor=#1E8449;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="830" y="1135" width="140" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_sam1" value="Meta SAM1&#xa;Vit-B/L/H&#xa;segment_anything/&#xa;segmentation lab" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7F8C8D;fontColor=#FFFFFF;strokeColor=#566573;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="990" y="1135" width="140" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="m_trk" value="Trackers&#xa;ByteTrack (MVP/showcase)&#xa;BoT-SORT (identity/NBA)&#xa;IoU fallback" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#34495E;fontColor=#FFFFFF;strokeColor=#2C3E50;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1150" y="1135" width="150" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== LANE: HARDWARE / DATA ===================== -->
+        <mxCell id="lane_hw" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDEDEC;strokeColor=#E74C3C;opacity=30;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="90" width="280" height="480" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane_hw_label" value="RUNTIME / GPUs / DATA" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontStyle=1;fontSize=13;fontColor=#922B21;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="95" width="240" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="hw1" value="GPU 0 · RTX 3070 Ti&#xa;Train yolo11n-seg&#xa;MVP / primary CUDA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C0392B;fontColor=#FFFFFF;strokeColor=#922B21;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="140" width="240" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="hw2" value="GPU 1 · RTX 3070&#xa;GDINO + SAM2 autolabel&#xa;(parallel when free)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E74C3C;fontColor=#FFFFFF;strokeColor=#922B21;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="230" width="240" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="hw3" value="Data stores&#xa;data/frames/&#xa;data/datasets/&#xa;data/exclusions/&#xa;outputs/*&#xa;weights/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;fontColor=#922B21;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="320" width="240" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="hw4" value="External&#xa;SportsDataverse (rosters)&#xa;Ultralytics (local)&#xa;No Supabase/Wix/Roblox" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;fontColor=#922B21;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="480" width="240" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== EDGES: UI ↔ API ===================== -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#1A5276;endArrow=block;endFill=1;" edge="1" parent="1" source="react" target="fastapi">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1l" value="/api proxy" style="edgeLabel;html=1;align=center;fontSize=10;fontColor=#1A5276;" vertex="1" connectable="0" parent="e1">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset"/></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#196F3D;endArrow=block;endFill=1;" edge="1" parent="1" source="fastapi" target="mvp1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== EDGES: MVP ===================== -->
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#B7950B;endArrow=block;endFill=1;" edge="1" parent="1" source="mvp1" target="mvp2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#B7950B;endArrow=block;endFill=1;" edge="1" parent="1" source="mvp2" target="mvp3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#B7950B;endArrow=block;endFill=1;" edge="1" parent="1" source="mvp3" target="mvp4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#B7950B;endArrow=block;endFill=1;" edge="1" parent="1" source="mvp4" target="mvp5"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=1;strokeColor=#5DADE2;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="streamlit" target="fastapi">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ===================== EDGES: SHOWCASE ===================== -->
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=3;strokeColor=#A04000;endArrow=block;endFill=1;" edge="1" parent="1" source="sh_src" target="sh_ingest"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=3;strokeColor=#A04000;endArrow=block;endFill=1;" edge="1" parent="1" source="sh_ingest" target="sh_auto"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=3;strokeColor=#A04000;endArrow=block;endFill=1;" edge="1" parent="1" source="sh_auto" target="sh_ds"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=3;strokeColor=#A04000;endArrow=block;endFill=1;" edge="1" parent="1" source="sh_ds" target="sh_train"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=3;strokeColor=#A04000;endArrow=block;endFill=1;" edge="1" parent="1" source="sh_train" target="sh_run"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- models into showcase -->
+        <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=1;strokeColor=#2980B9;dashed=1;endArrow=block;endFill=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="m_gdino" target="sh_auto">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=1;strokeColor=#27AE60;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="m_sam2" target="sh_auto">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#D35400;endArrow=block;endFill=1;" edge="1" parent="1" source="m_yoloseg" target="sh_run">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- fusion edges -->
+        <mxCell id="e20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#6C3483;endArrow=block;endFill=1;" edge="1" parent="1" source="fu_vid" target="fu_yolo"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#6C3483;endArrow=block;endFill=1;" edge="1" parent="1" source="fu_yolo" target="fu_fuse"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#6C3483;endArrow=block;endFill=1;" edge="1" parent="1" source="fu_gdino" target="fu_fuse"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e23" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#6C3483;endArrow=block;endFill=1;" edge="1" parent="1" source="fu_fuse" target="fu_sam"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e24" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#6C3483;endArrow=block;endFill=1;" edge="1" parent="1" source="fu_sam" target="fu_trk"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="e25" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=1;strokeColor=#8E44AD;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="m_det" target="fu_yolo">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e26" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=1;strokeColor=#2980B9;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="m_gdino" target="fu_gdino">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e27" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=1;strokeColor=#27AE60;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="m_sam2" target="fu_sam">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- identity -->
+        <mxCell id="e30" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#0E6655;endArrow=block;endFill=1;" edge="1" parent="1" source="id1" target="id2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e31" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#0E6655;endArrow=block;endFill=1;" edge="1" parent="1" source="id2" target="id3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e32" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=1;strokeColor=#0E6655;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="id3" target="id_api">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- MVP uses YOLO detect -->
+        <mxCell id="e33" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=1;strokeColor=#566573;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="m_yolo" target="mvp2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e34" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=1;strokeColor=#34495E;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="m_trk" target="mvp2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e35" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#D35400;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1" source="m_yoloseg" target="mvp2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- legend -->
+        <mxCell id="legend" value="Legend&#xa;Solid = primary data/control flow&#xa;Dashed = model feed / optional path&#xa;Orange = showcase train (current focus)&#xa;Yellow = React MVP&#xa;Purple = fusion&#xa;Teal = identity&#xa;Gray = models/weights" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=10;fillColor=#FFFFFF;strokeColor=#85929E;fontColor=#2C3E50;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="610" width="280" height="170" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

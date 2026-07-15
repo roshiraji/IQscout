@@ -1,34 +1,58 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-function PlayerSnapshotSelector({ snapshot, imageUrl, onConfirm, isSaving }) {
-  const [selectedLabels, setSelectedLabels] = useState(() => new Set());
+function selectionKey(player) {
+  return player?.person_group_id ?? player?.track_id;
+}
+
+function PlayerSnapshotSelector({
+  snapshot,
+  imageUrl,
+  masksImageUrl,
+  onConfirm,
+  isSaving,
+}) {
+  const [selectedKeys, setSelectedKeys] = useState(() => new Set());
   const [saveMessage, setSaveMessage] = useState("");
+  const [viewMode, setViewMode] = useState("labels"); // labels | masks
 
   const frameWidth = snapshot?.frame_width || 1;
   const frameHeight = snapshot?.frame_height || 1;
   const players = snapshot?.players || [];
+  const selectionUnit = snapshot?.selection_unit || "person_group_id";
+  const showLabels = viewMode === "labels";
+  const masksAvailable = Boolean(
+    snapshot?.masks_image_filename || snapshot?.masks_image_path
+  );
+  const activeImageUrl =
+    !showLabels && masksImageUrl && masksAvailable ? masksImageUrl : imageUrl;
 
   const selectedPlayers = useMemo(
-    () => players.filter((player) => selectedLabels.has(player.label)),
-    [players, selectedLabels]
+    () => players.filter((player) => selectedKeys.has(selectionKey(player))),
+    [players, selectedKeys]
   );
 
-  function togglePlayer(label) {
+  useEffect(() => {
+    setSelectedKeys(new Set());
     setSaveMessage("");
-    setSelectedLabels((current) => {
+    setViewMode("labels");
+  }, [snapshot?.job_id]);
+
+  function togglePlayer(key) {
+    setSaveMessage("");
+    setSelectedKeys((current) => {
       const next = new Set(current);
-      if (next.has(label)) {
-        next.delete(label);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(label);
+        next.add(key);
       }
       return next;
     });
   }
 
   async function handleConfirm() {
-    if (selectedPlayers.length === 0) {
-      setSaveMessage("Select at least one player box to track.");
+    if (selectedPlayers.length < 2) {
+      setSaveMessage("Select at least two players for coach insights.");
       return;
     }
 
@@ -47,36 +71,118 @@ function PlayerSnapshotSelector({ snapshot, imageUrl, onConfirm, isSaving }) {
     <div className="card snapshot-panel">
       <h2>Choose Players to Track</h2>
       <p className="status-text">
-        Click a player box on the snapshot (or use the list below). Frame{" "}
+        Click a stitched person group ({selectionUnit}) on the snapshot. Masks are
+        colored by jersey team (e.g. red vs blue) so home/away is easy to see.
+        Select at least two players, then Confirm for a focused preview and coach
+        insights — the model is not rerun. Change the selection and Confirm again
+        anytime to rebuild the focused preview for a new set of players. Frame{" "}
         {snapshot.snapshot_frame_number} at {snapshot.timestamp_seconds}s —{" "}
-        {players.length} players detected.
+        {players.length} selectable people.
       </p>
 
-      <div className="snapshot-stage">
+      {Array.isArray(snapshot.teams) && snapshot.teams.length > 0 && (
+        <div className="team-legend-row">
+          {snapshot.teams.map((team) => (
+            <span
+              key={team.team_id}
+              className="team-legend-chip"
+              style={{
+                borderColor: team.overlay_color_hex || "#888",
+                background: `${team.overlay_color_hex || "#888"}33`,
+                color: team.jersey_color_name === "white" ? "#111" : "#f4f4f4",
+              }}
+            >
+              {team.label || `Team ${team.jersey_color_name || team.team_id}`}
+              {Array.isArray(team.member_group_ids)
+                ? ` (${team.member_group_ids.length})`
+                : ""}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="snapshot-view-toggle" role="group" aria-label="Snapshot view mode">
+        <button
+          type="button"
+          className={`view-toggle-btn ${showLabels ? "view-toggle-btn-active" : ""}`}
+          aria-pressed={showLabels}
+          onClick={() => setViewMode("labels")}
+        >
+          Boxes + labels
+        </button>
+        <button
+          type="button"
+          className={`view-toggle-btn ${!showLabels ? "view-toggle-btn-active" : ""}`}
+          aria-pressed={!showLabels}
+          onClick={() => setViewMode("masks")}
+          disabled={!masksAvailable || !masksImageUrl}
+          title={
+            masksAvailable
+              ? "Show jersey-colored segmentation only"
+              : "Masks-only snapshot not available for this job — re-analyze the clip"
+          }
+        >
+          Segmentation only
+        </button>
+      </div>
+
+      <div className={`snapshot-stage ${showLabels ? "" : "snapshot-stage-masks"}`}>
         <img
-          src={imageUrl}
-          alt="Player snapshot for tracking selection"
+          src={activeImageUrl}
+          alt={
+            showLabels
+              ? "Player snapshot with boxes and labels"
+              : "Player snapshot with jersey segmentation only"
+          }
           className="snapshot-image"
         />
         <div className="snapshot-overlay">
           {players.map((player) => {
-            const isSelected = selectedLabels.has(player.label);
+            const key = selectionKey(player);
+            const isSelected = selectedKeys.has(key);
             const left = (player.x1 / frameWidth) * 100;
             const top = (player.y1 / frameHeight) * 100;
             const width = ((player.x2 - player.x1) / frameWidth) * 100;
             const height = ((player.y2 - player.y1) / frameHeight) * 100;
 
+            const teamColor = player.overlay_color_hex || "#ffffff";
             return (
               <button
-                key={player.label}
+                key={key}
                 type="button"
-                className={`player-box ${isSelected ? "player-box-selected" : ""}`}
-                style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
-                onClick={() => togglePlayer(player.label)}
-                title={`${player.label} (${player.confidence})`}
+                className={`player-box ${isSelected ? "player-box-selected" : ""} ${
+                  showLabels ? "" : "player-box-hit-only"
+                }`}
+                style={{
+                  left: `${left}%`,
+                  top: `${top}%`,
+                  width: `${width}%`,
+                  height: `${height}%`,
+                  borderColor: showLabels
+                    ? isSelected
+                      ? "#00d26a"
+                      : teamColor
+                    : isSelected
+                      ? "#00d26a"
+                      : "transparent",
+                  boxShadow: showLabels
+                    ? `inset 0 0 0 2px ${teamColor}55`
+                    : isSelected
+                      ? `inset 0 0 0 2px #00d26a88`
+                      : "none",
+                }}
+                onClick={() => togglePlayer(key)}
+                title={`${player.player_name || player.label} (${player.confidence})`}
                 aria-pressed={isSelected}
               >
-                <span className="player-box-label">{player.label}</span>
+                {showLabels && (
+                  <span
+                    className="player-box-label"
+                    style={{ background: teamColor, color: "#0a0a0a" }}
+                  >
+                    {player.player_name || player.label}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -85,15 +191,26 @@ function PlayerSnapshotSelector({ snapshot, imageUrl, onConfirm, isSaving }) {
 
       <div className="player-chip-row">
         {players.map((player) => {
-          const isSelected = selectedLabels.has(player.label);
+          const key = selectionKey(player);
+          const isSelected = selectedKeys.has(key);
+          const teamColor = player.overlay_color_hex || undefined;
           return (
             <button
-              key={player.label}
+              key={key}
               type="button"
               className={`player-chip ${isSelected ? "player-chip-selected" : ""}`}
-              onClick={() => togglePlayer(player.label)}
+              style={
+                teamColor
+                  ? {
+                      borderColor: isSelected ? "#00d26a" : teamColor,
+                      boxShadow: `inset 4px 0 0 ${teamColor}`,
+                    }
+                  : undefined
+              }
+              onClick={() => togglePlayer(key)}
             >
-              {player.label} ({Math.round(player.confidence * 100)}%)
+              {player.player_name || player.label} ({Math.round(player.confidence * 100)}%)
+              {player.team_label ? ` · ${player.team_label}` : ""}
             </button>
           );
         })}
@@ -104,9 +221,13 @@ function PlayerSnapshotSelector({ snapshot, imageUrl, onConfirm, isSaving }) {
           type="button"
           className="confirm-button"
           onClick={handleConfirm}
-          disabled={isSaving || selectedPlayers.length === 0}
+          disabled={isSaving || selectedPlayers.length < 2}
         >
-          {isSaving ? "Tracking players…" : `Confirm ${selectedPlayers.length} player(s) to track`}
+          {isSaving
+            ? "Tracking players…"
+            : selectedPlayers.length < 2
+              ? "Select at least 2 players for coach insights"
+              : `Confirm ${selectedPlayers.length} player(s) to track`}
         </button>
       </div>
 

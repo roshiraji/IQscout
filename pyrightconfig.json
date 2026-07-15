@@ -1,7 +1,9 @@
 {
-  "venvPath": "scoutiq",
+  "venvPath": ".",
   "venv": ".venv",
   "extraPaths": [
-    "scoutiq/src"
+    "scoutiq/src",
+    "GroundingDINO",
+    "grounded_sam_pipeline"
   ]
 }

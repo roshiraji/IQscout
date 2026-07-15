@@ -4,7 +4,7 @@ function statusClass(status) {
   return "status-warning";
 }
 
-function ProcessingStatus({ validation, labeling, error, snapshot }) {
+function ProcessingStatus({ validation, labeling, error, snapshot, job }) {
   if (error) {
     return (
       <div className="card result-panel status-rejected">
@@ -63,12 +63,37 @@ function ProcessingStatus({ validation, labeling, error, snapshot }) {
         </div>
       )}
 
+      {status === "approved" && job && job.status !== "ready" && (
+        <div className="labeling-summary">
+          <h3>Full-clip tracking: {job.stage || job.status}</h3>
+          <p>
+            {job.frames_processed || 0} / {job.total_frames || "?"} frames ·{" "}
+            {Math.round((job.progress || 0) * 100)}%
+          </p>
+          <progress value={job.progress || 0} max="1" style={{ width: "100%" }} />
+          <p>
+            Selection unlocks only after the canonical model pass covers the full clip.
+          </p>
+        </div>
+      )}
+
+      {job?.status === "ready" && (
+        <div className="labeling-summary">
+          <h3>Full-clip canonical tracking ready</h3>
+          <p>
+            {job.result?.frames_tracked} / {job.result?.source_frame_count} frames ·{" "}
+            {job.result?.unique_tracks} track IDs ·{" "}
+            {Math.round((job.result?.frame_coverage || 0) * 100)}% frame coverage
+          </p>
+        </div>
+      )}
+
       {status === "approved" && snapshot && (
         <div className="labeling-summary">
-          <h3>Player snapshot ready</h3>
+          <h3>Canonical track selection ready</h3>
           <p>
             Frame {snapshot.snapshot_frame_number} at {snapshot.timestamp_seconds}s ·{" "}
-            {snapshot.player_count} players detected — select boxes below.
+            {snapshot.player_count} mature tracks — select IDs below.
           </p>
         </div>
       )}

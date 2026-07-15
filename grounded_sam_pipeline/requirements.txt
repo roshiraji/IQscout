@@ -1,0 +1,15 @@
+# Install from grounded_sam_pipeline/ using the repo-root .venv:
+#   pip install -r grounded_sam_pipeline/requirements.txt
+# Also from repo root:
+#   pip install -e GroundingDINO
+#   pip install -e .
+torch>=2.0
+torchvision>=0.15
+opencv-python>=4.8
+numpy>=1.24
+supervision>=0.29.0
+tqdm>=4.66
+Pillow>=10.0
+PyYAML>=6.0
+transformers>=4.36,<5.0
+pytest>=8.0

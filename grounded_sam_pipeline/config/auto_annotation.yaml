@@ -1,0 +1,61 @@
+input:
+  images_directory: "data/input_images"
+  extensions:
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+
+output:
+  root_directory: "data/auto_annotated"
+  previews_directory: "data/auto_annotated/previews"
+  masks_directory: "data/auto_annotated/masks"
+  annotations_directory: "data/auto_annotated/annotations"
+  reports_directory: "data/auto_annotated/reports"
+
+models:
+  grounding_dino:
+    # Shared repo assets live one level up (ScoutIQ project root)
+    config_path: "../GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+    checkpoint_path: "../weights/groundingdino_swint_ogc.pth"
+  sam:
+    model_type: "vit_h"
+    checkpoint_path: "../weights/sam_vit_h_4b8939.pth"
+
+detection:
+  classes:
+    - "person"
+    - "ball"
+    - "referee"
+  box_threshold: 0.35
+  text_threshold: 0.25
+  prompt_template: "all {class_name}s"
+  prompt_overrides:
+    person: "all people"
+    referee: "all basketball referees"
+    ball: "the basketball"
+  nms_iou_threshold: 0.50
+  minimum_box_area_pixels: 100
+  minimum_image_area_percentage: 0.002
+  maximum_image_area_percentage: 0.80
+
+segmentation:
+  multimask_output: true
+  choose_highest_score: true
+  save_individual_masks: true
+
+export:
+  formats:
+    - "coco"
+    - "yolo_segmentation"
+    - "voc"
+  save_previews: true
+  save_comparison_previews: false
+  save_summary_csv: true
+  save_summary_json: true
+  polygon_approximation_epsilon: 2.0
+  min_contour_area_pixels: 10
+
+pipeline:
+  device: "auto"   # auto | cuda | cpu
+  retry_on_cpu_after_oom: true
+  log_level: "INFO"

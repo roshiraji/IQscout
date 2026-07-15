@@ -1,0 +1,63 @@
+# WNBA player annotation — aligned with scoutiq/configs/wnba_players.yaml
+# Input/output paths are set at runtime by src/ingest/wnba_grounded_sam.py
+
+input:
+  images_directory: "data/input_images"
+  extensions:
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+
+output:
+  root_directory: "data/auto_annotated_wnba"
+  previews_directory: "data/auto_annotated_wnba/previews"
+  masks_directory: "data/auto_annotated_wnba/masks"
+  annotations_directory: "data/auto_annotated_wnba/annotations"
+  reports_directory: "data/auto_annotated_wnba/reports"
+
+models:
+  grounding_dino:
+    config_path: "../GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+    checkpoint_path: "../weights/groundingdino_swint_ogc.pth"
+  sam:
+    model_type: "vit_h"
+    checkpoint_path: "../weights/sam_vit_h_4b8939.pth"
+
+detection:
+  classes:
+    - "player"
+    - "referee"
+    - "ball"
+  box_threshold: 0.32
+  text_threshold: 0.25
+  prompt_template: "all {class_name}s"
+  prompt_overrides:
+    player: "all basketball players on the court"
+    referee: "all basketball referees"
+    ball: "the basketball"
+  nms_iou_threshold: 0.45
+  minimum_box_area_pixels: 200
+  minimum_image_area_percentage: 0.003
+  maximum_image_area_percentage: 0.75
+
+segmentation:
+  multimask_output: true
+  choose_highest_score: true
+  save_individual_masks: true
+
+export:
+  formats:
+    - "coco"
+    - "yolo_segmentation"
+    - "voc"
+  save_previews: true
+  save_comparison_previews: false
+  save_summary_csv: true
+  save_summary_json: true
+  polygon_approximation_epsilon: 2.0
+  min_contour_area_pixels: 20
+
+pipeline:
+  device: "auto"
+  retry_on_cpu_after_oom: true
+  log_level: "INFO"

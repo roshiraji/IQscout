@@ -1,0 +1,65 @@
+# Local smoke-test config — uses bundled dog sample images (not basketball).
+# Run: run.bat --config config\auto_annotation_dog_demo.yaml --single-image data\input_images\dog-3.jpeg --overwrite
+
+input:
+  images_directory: "data/input_images"
+  extensions:
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+
+output:
+  root_directory: "data/auto_annotated_dog_demo"
+  previews_directory: "data/auto_annotated_dog_demo/previews"
+  masks_directory: "data/auto_annotated_dog_demo/masks"
+  annotations_directory: "data/auto_annotated_dog_demo/annotations"
+  reports_directory: "data/auto_annotated_dog_demo/reports"
+
+models:
+  grounding_dino:
+    config_path: "../GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+    checkpoint_path: "../weights/groundingdino_swint_ogc.pth"
+  sam:
+    model_type: "vit_h"
+    checkpoint_path: "../weights/sam_vit_h_4b8939.pth"
+
+detection:
+  classes:
+    - "dog"
+    - "person"
+    - "chair"
+    - "car"
+    - "shoe"
+  box_threshold: 0.30
+  text_threshold: 0.25
+  prompt_template: "all {class_name}s"
+  prompt_overrides:
+    person: "all people"
+    dog: "all dogs"
+    car: "all cars"
+    shoe: "all shoes"
+  nms_iou_threshold: 0.50
+  minimum_box_area_pixels: 100
+  minimum_image_area_percentage: 0.002
+  maximum_image_area_percentage: 0.80
+
+segmentation:
+  multimask_output: true
+  choose_highest_score: true
+  save_individual_masks: true
+
+export:
+  formats:
+    - "coco"
+    - "yolo_segmentation"
+  save_previews: true
+  save_comparison_previews: false
+  save_summary_csv: true
+  save_summary_json: true
+  polygon_approximation_epsilon: 2.0
+  min_contour_area_pixels: 10
+
+pipeline:
+  device: "auto"
+  retry_on_cpu_after_oom: true
+  log_level: "INFO"

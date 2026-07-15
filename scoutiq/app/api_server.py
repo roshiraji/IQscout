@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -23,13 +24,29 @@ for _p in (PROJECT_ROOT, SRC_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+# Pin bundled ffmpeg before any video encode path runs (imageio / OpenCV helpers).
+import os  # noqa: E402
+
+_ffmpeg_bin = (
+    PROJECT_ROOT
+    / ".venv"
+    / "Lib"
+    / "site-packages"
+    / "imageio_ffmpeg"
+    / "binaries"
+    / "ffmpeg-win-x86_64-v7.1.exe"
+)
+if _ffmpeg_bin.is_file():
+    os.environ["IMAGEIO_FFMPEG_EXE"] = str(_ffmpeg_bin.resolve())
+
 from heatmap import generate_player_heatmap  # noqa: E402
 from player_labeling import run_player_labeling  # noqa: E402
 from player_snapshot_selector import run_snapshot_selection  # noqa: E402
-from track_players import run_player_tracking  # noqa: E402
+from track_players import render_selected_tracks, run_player_tracking  # noqa: E402
 from video_intake_filter import save_intake_report, validate_video  # noqa: E402
 
 from src.pipeline.player_track_pipeline import run_player_seg_tracking  # noqa: E402
+from src.pipeline.job_manager import get_job_manager  # noqa: E402
 
 INPUT_DIR = PROJECT_ROOT / "data" / "input_videos"
 REPORTS_DIR = PROJECT_ROOT / "outputs" / "intake_reports"
@@ -42,11 +59,14 @@ TRACKING_VIDEOS_DIR = PROJECT_ROOT / "outputs" / "tracking_videos"
 
 
 class TrackingSelectionRequest(BaseModel):
-    """User's chosen Player_# boxes from the snapshot GUI."""
+    """User's chosen Person # / track boxes from the snapshot GUI."""
 
-    video_path: str
-    snapshot_frame_number: int
-    timestamp_seconds: float
+    job_id: str | None = None
+    video_path: str | None = None
+    snapshot_frame_number: int | None = None
+    timestamp_seconds: float | None = None
+    selected_person_group_ids: list[int] = Field(default_factory=list)
+    selected_track_ids: list[int] = Field(default_factory=list)
     selected_players: list[dict] = Field(default_factory=list)
     run_tracking: bool = True
 
@@ -90,7 +110,17 @@ def _ensure_directories() -> None:
 def health() -> dict[str, str | list[str]]:
     return {
         "status": "ok",
-        "features": ["snapshot", "tracking_selection", "player_tracking", "intake", "labeling"],
+        "features": [
+            "background_tracking_jobs",
+            "canonical_snapshot",
+            "tracking_selection",
+            "person_group_stitching",
+            "selected_player_retention",
+            "coach_insights",
+            "full_clip_player_tracking",
+            "identity_attachments",
+            "intake",
+        ],
     }
 
 
@@ -99,8 +129,12 @@ async def analyze_video(
     file: UploadFile = File(...),
     run_labeling: bool = False,
     run_snapshot: bool = True,
+    league: str | None = Form(None),
+    game_date: str | None = Form(None),
+    home_team: str | None = Form(None),
+    away_team: str | None = Form(None),
 ) -> dict:
-    """Save upload, validate intake, snapshot players, optional full labeling."""
+    """Save/validate upload and enqueue one canonical full-clip tracking job."""
     _ensure_directories()
 
     if not file.filename:
@@ -109,7 +143,9 @@ async def analyze_video(
     if not file.filename.lower().endswith(".mp4"):
         raise HTTPException(status_code=400, detail="Only .mp4 files are supported.")
 
-    destination = INPUT_DIR / Path(file.filename).name
+    # Unique storage prevents a later upload with the same filename from
+    # overwriting a queued/running job's source video.
+    destination = INPUT_DIR / f"{uuid.uuid4().hex[:10]}_{Path(file.filename).name}"
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
@@ -123,23 +159,36 @@ async def analyze_video(
         reports_dir=REPORTS_DIR,
         selected_file_path=destination,
     )
+    if validation.get("metadata"):
+        validation["metadata"]["filename"] = file.filename
 
     response: dict = {
         "validation": validation,
         "report_path": str(report_path.resolve()),
         "saved_path": str(destination.resolve()),
+        "job_id": None,
+        "job": None,
         "snapshot": None,
         "labeling": None,
     }
 
-    if validation["usable"] and run_snapshot:
-        try:
-            response["snapshot"] = run_snapshot_selection(destination, quiet=True)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Player snapshot selection failed: {exc}",
-            ) from exc
+    if validation["usable"]:
+        game_context = {
+            key: value
+            for key, value in {
+                "league": league,
+                "game_date": game_date,
+                "home_team": home_team,
+                "away_team": away_team,
+            }.items()
+            if value
+        }
+        job = get_job_manager().submit(
+            destination,
+            game_context=game_context,
+        )
+        response["job_id"] = job["job_id"]
+        response["job"] = job
 
     if validation["usable"] and run_labeling:
         try:
@@ -166,14 +215,218 @@ async def analyze_video(
     return response
 
 
+@app.get("/api/jobs/{job_id}")
+def get_tracking_job(job_id: str) -> dict:
+    """Return durable background progress and canonical artifacts."""
+    state = get_job_manager().get(Path(job_id).name)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    result = state.get("result")
+    if result and result.get("snapshot"):
+        identity_path = get_job_manager().artifact_dir(job_id) / "identity_attachments.json"
+        if identity_path.is_file():
+            try:
+                payload = json.loads(identity_path.read_text(encoding="utf-8"))
+                by_track = {
+                    int(item["track_id"]): item
+                    for item in payload.get("attachments", [])
+                }
+                for player in result["snapshot"].get("players", []):
+                    attachment = by_track.get(int(player["track_id"]))
+                    if attachment:
+                        player.update(
+                            {
+                                "identity_status": attachment.get("status", "pending"),
+                                "player_name": attachment.get("player_name"),
+                                "team_id": attachment.get("team_id"),
+                                "jersey_number": attachment.get("jersey_number"),
+                                "identity_confidence": attachment.get("confidence"),
+                            }
+                        )
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+    return state
+
+
+@app.get("/api/jobs/{job_id}/isolate-status")
+def get_isolate_status(job_id: str, generation: str | None = None) -> dict:
+    """Return readiness/progress for the latest temporal isolate render."""
+    state = get_job_manager().get_isolate(Path(job_id).name)
+    if state is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No isolate render has been queued. Re-Confirm the selection.",
+        )
+    if generation and state.get("generation") != generation:
+        raise HTTPException(
+            status_code=409,
+            detail="This isolate render was replaced by a newer selection.",
+        )
+    return state
+
+
+@app.get("/api/jobs/{job_id}/files/{kind}")
+def get_job_file(job_id: str, kind: str) -> FileResponse:
+    """Serve canonical/focused artifacts without exposing arbitrary paths."""
+    filenames = {
+        "snapshot": ("snapshot.jpg", "image/jpeg"),
+        "snapshot_masks": ("snapshot_masks.jpg", "image/jpeg"),
+        "all": ("all_players.mp4", "video/mp4"),
+        "focused": ("focused_players.mp4", "video/mp4"),
+        "focused_isolated": ("focused_isolated.mp4", "video/mp4"),
+        "tracks": ("tracks.csv", "text/csv"),
+        "selected_tracks": ("selected_tracks.csv", "text/csv"),
+        "quality": ("quality.json", "application/json"),
+        "identity": ("identity_attachments.json", "application/json"),
+        "person_groups": ("person_groups.json", "application/json"),
+        "selection_summary": ("selection_summary.json", "application/json"),
+        "coach_insights": ("coach_insights.json", "application/json"),
+    }
+    if kind not in filenames:
+        raise HTTPException(status_code=404, detail="Unknown job artifact.")
+    filename, media_type = filenames[kind]
+    path = get_job_manager().artifact_dir(Path(job_id).name) / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Job artifact not ready.")
+    # Focused/selection artifacts are rewritten on each Confirm — avoid browsers
+    # replaying a stale mp4 when the URL path is unchanged.
+    headers = None
+    if kind in {
+        "focused",
+        "focused_isolated",
+        "selected_tracks",
+        "coach_insights",
+        "selection_summary",
+    }:
+        headers = {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=filename,
+        headers=headers,
+    )
+
+
 @app.post("/api/tracking/selection")
 def save_tracking_selection(body: TrackingSelectionRequest) -> dict:
-    """Save selected players and run ByteTrack from the snapshot frame onward."""
+    """Filter stitched person groups and render without rerunning inference."""
     _ensure_directories()
 
-    if not body.selected_players:
-        raise HTTPException(status_code=400, detail="Select at least one player to track.")
+    selected_group_ids = list(body.selected_person_group_ids)
+    if not selected_group_ids:
+        selected_group_ids = [
+            int(player["person_group_id"])
+            for player in body.selected_players
+            if player.get("person_group_id") is not None
+        ]
+    selected_ids = list(body.selected_track_ids)
+    if not selected_ids:
+        selected_ids = [
+            int(player["track_id"])
+            for player in body.selected_players
+            if player.get("track_id") is not None
+        ]
+    if not selected_group_ids and not selected_ids and not body.selected_players:
+        raise HTTPException(
+            status_code=400,
+            detail="Select at least two players for coach insights.",
+        )
 
+    effective_count = len(selected_group_ids) or len(selected_ids) or len(
+        body.selected_players
+    )
+    if body.job_id and effective_count < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Select at least two person groups for coach insights.",
+        )
+
+    if body.job_id:
+        manager = get_job_manager()
+        state = manager.get(body.job_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="Tracking job not found.")
+        if state.get("status") != "ready":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Tracking job is {state.get('status')}; wait until ready.",
+            )
+        selection_path = manager.artifact_dir(body.job_id) / "selection.json"
+        payload = {
+            "job_id": body.job_id,
+            "selected_person_group_ids": selected_group_ids,
+            "selected_track_ids": selected_ids,
+            "selected_players": body.selected_players,
+            "selected_labels": [
+                player.get("player_name") or player.get("label")
+                for player in body.selected_players
+            ],
+        }
+        selection_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        try:
+            # When person groups are provided, do not also pass track_ids —
+            # snapshot track_id mirrors person_group_id and must not be remapped
+            # through raw ByteTrack track_to_group.
+            tracking = render_selected_tracks(
+                manager.artifact_dir(body.job_id),
+                None if selected_group_ids else selected_ids,
+                selected_person_group_ids=selected_group_ids or None,
+                selected_players=body.selected_players,
+                quiet=True,
+            )
+            isolate_generation = uuid.uuid4().hex
+            isolate_state = manager.submit_isolate(
+                body.job_id,
+                set(tracking["selected_person_group_ids"]),
+                isolate_generation,
+            )
+            tracking.update(
+                {
+                    "isolated_tracking_video": None,
+                    "isolation_available": False,
+                    "isolation_status": isolate_state["status"],
+                    "isolation_generation": isolate_generation,
+                }
+            )
+            summary_path = manager.artifact_dir(body.job_id) / "selection_summary.json"
+            summary_path.write_text(json.dumps(tracking, indent=2), encoding="utf-8")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Focused preview rendering failed: {exc}",
+            ) from exc
+        player_count = len(
+            tracking.get("selected_person_group_ids")
+            or selected_group_ids
+            or selected_ids
+        )
+        retention = tracking.get("selected_player_retention")
+        retention_note = (
+            f" Retention {round(float(retention) * 100)}%."
+            if retention is not None
+            else ""
+        )
+        return {
+            "message": (
+                f"Focused full-clip preview ready for {player_count} person group(s); "
+                f"canonical inference was reused.{retention_note}"
+            ),
+            "selection_path": str(selection_path.resolve()),
+            "selected_labels": payload["selected_labels"],
+            "player_count": player_count,
+            "tracking": tracking,
+            "coach_insights": tracking.get("coach_insights"),
+            "coach_narrative": tracking.get("coach_narrative"),
+        }
+
+    if not body.video_path:
+        raise HTTPException(status_code=400, detail="video_path is required for legacy selection.")
     video_path = Path(body.video_path)
     if not video_path.is_file():
         raise HTTPException(status_code=400, detail=f"Video not found: {video_path}")

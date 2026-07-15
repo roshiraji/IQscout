@@ -111,28 +111,47 @@ def draw_showcase_frame(
     frame_id: int,
     timestamp: float,
     draw_hud: bool = True,
+    draw_boxes: bool = True,
+    draw_labels: bool = True,
+    draw_masks: bool = True,
 ) -> np.ndarray:
     canvas = image.copy()
     for det in tracked:
-        color = _id_color(int(det.get("track_id", -1)))
+        overlay = det.get("overlay_color_bgr") or det.get("overlay_color")
+        if overlay is not None and len(overlay) >= 3:
+            color = (int(overlay[0]), int(overlay[1]), int(overlay[2]))
+        else:
+            color = _id_color(int(det.get("track_id", -1)))
         poly = det.get("mask_polygon")
-        if poly and len(poly) >= 3:
+        if draw_masks and poly and len(poly) >= 3:
             pts = np.array([[int(p[0]), int(p[1])] for p in poly], dtype=np.int32)
-            overlay = canvas.copy()
-            cv2.fillPoly(overlay, [pts], color)
-            cv2.addWeighted(overlay, 0.35, canvas, 0.65, 0, canvas)
+            tint = canvas.copy()
+            cv2.fillPoly(tint, [pts], color)
+            cv2.addWeighted(tint, 0.35, canvas, 0.65, 0, canvas)
             cv2.polylines(canvas, [pts], True, color, 1, cv2.LINE_AA)
         box = det.get("bbox_xyxy") or []
-        if len(box) >= 4:
+        if len(box) >= 4 and (draw_boxes or draw_labels):
             x1, y1, x2, y2 = [int(v) for v in box[:4]]
-            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
-            tid = det.get("track_id", -1)
-            conf = det.get("confidence", 0.0)
-            label = f"#{tid} {conf:.2f}"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            ty = max(y1 - 4, th + 2)
-            cv2.rectangle(canvas, (x1, ty - th - 2), (x1 + tw + 4, ty + 2), color, -1)
-            cv2.putText(canvas, label, (x1 + 2, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+            if draw_boxes:
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+            if draw_labels:
+                tid = det.get("track_id", -1)
+                conf = det.get("confidence", 0.0)
+                custom = det.get("label")
+                label = custom if custom else f"#{tid} {conf:.2f}"
+                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                ty = max(y1 - 4, th + 2)
+                cv2.rectangle(canvas, (x1, ty - th - 2), (x1 + tw + 4, ty + 2), color, -1)
+                cv2.putText(
+                    canvas,
+                    label,
+                    (x1 + 2, ty),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
     if draw_hud:
         text = f"frame {frame_id:04d} | t={timestamp:.2f}s | players={len(tracked)}"
         cv2.putText(canvas, text, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)

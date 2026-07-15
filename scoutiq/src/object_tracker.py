@@ -3,45 +3,11 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
-
-_bytetrack: object | None = None
-_bytetrack_failed = False
-
-
-def _get_bytetrack():
-    global _bytetrack, _bytetrack_failed
-    if _bytetrack is not None:
-        return _bytetrack
-    if _bytetrack_failed:
-        return None
-    try:
-        import warnings
-        import supervision as sv
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            _bytetrack = sv.ByteTrack(
-                track_activation_threshold=0.25,
-                lost_track_buffer=30,
-                minimum_matching_threshold=0.8,
-                frame_rate=30,
-                minimum_consecutive_frames=1,
-            )
-        logger.info("ByteTrack initialized via supervision.")
-    except Exception as exc:
-        logger.warning("ByteTrack unavailable (%s) — using IoU fallback tracker.", exc)
-        _bytetrack_failed = True
-    return _bytetrack
-
-
-# --------------------------------------------------------------------------- #
-# ByteTrack path                                                               #
-# --------------------------------------------------------------------------- #
 
 def _detections_to_sv(detections: list[dict]) -> "supervision.Detections":
     import supervision as sv
@@ -51,42 +17,6 @@ def _detections_to_sv(detections: list[dict]) -> "supervision.Detections":
     confs = np.array([d.get("confidence", 0.5) for d in detections], dtype=np.float32)
     class_ids = np.array([d.get("class_id", 0) for d in detections], dtype=int)
     return sv.Detections(xyxy=boxes, confidence=confs, class_id=class_ids)
-
-
-def track_with_bytetrack(detections: list[dict]) -> list[dict]:
-    tracker = _get_bytetrack()
-    if tracker is None:
-        return []
-
-    import supervision as sv
-    sv_dets = _detections_to_sv(detections)
-    if len(sv_dets) == 0:
-        return []
-
-    try:
-        tracked = tracker.update_with_detections(sv_dets)
-    except Exception as exc:
-        logger.warning("ByteTrack update failed: %s", exc)
-        return []
-
-    results: list[dict] = []
-    for i in range(len(tracked)):
-        track_id = int(tracked.tracker_id[i]) if tracked.tracker_id is not None else -1
-        box = tracked.xyxy[i].tolist()
-        cls_id = int(tracked.class_id[i]) if tracked.class_id is not None else 0
-        conf = float(tracked.confidence[i]) if tracked.confidence is not None else 0.5
-
-        # Match back to original detection for mask/class_name.
-        src = _find_closest_detection(box, detections, cls_id)
-        base = src.copy() if src else {}
-        base.update({
-            "track_id": track_id,
-            "bbox_xyxy": [int(v) for v in box],
-            "class_id": cls_id,
-            "confidence": round(conf, 4),
-        })
-        results.append(base)
-    return results
 
 
 def _find_closest_detection(box: list, detections: list[dict], cls_id: int) -> dict | None:
@@ -176,19 +106,100 @@ class IouTracker:
         return results
 
 
-_iou_tracker = IouTracker()
+class ObjectTracker:
+    """One isolated ByteTrack/IoU lifecycle.
+
+    Create one instance per video job. This prevents track IDs and lost-track
+    state from leaking between concurrent uploads.
+    """
+
+    def __init__(
+        self,
+        *,
+        frame_rate: float = 30.0,
+        track_activation_threshold: float = 0.25,
+        lost_track_buffer: int = 30,
+        minimum_matching_threshold: float = 0.8,
+    ) -> None:
+        self._iou_tracker = IouTracker()
+        self._bytetrack: object | None = None
+        try:
+            import warnings
+            import supervision as sv
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self._bytetrack = sv.ByteTrack(
+                    track_activation_threshold=track_activation_threshold,
+                    lost_track_buffer=lost_track_buffer,
+                    minimum_matching_threshold=minimum_matching_threshold,
+                    frame_rate=max(int(round(frame_rate)), 1),
+                    minimum_consecutive_frames=1,
+                )
+            logger.info("ByteTrack initialized via supervision (isolated job tracker).")
+        except Exception as exc:
+            logger.warning("ByteTrack unavailable (%s) — using IoU fallback tracker.", exc)
+
+    def update(self, detections: list[dict]) -> list[dict]:
+        """Assign stable IDs while retaining source masks and class metadata."""
+        if self._bytetrack is not None:
+            import supervision as sv
+
+            sv_dets = _detections_to_sv(detections)
+            if len(sv_dets) == 0:
+                # ByteTrack still needs empty frames to age lost tracks.
+                try:
+                    self._bytetrack.update_with_detections(sv_dets)
+                except Exception:
+                    pass
+                return []
+            try:
+                tracked = self._bytetrack.update_with_detections(sv_dets)
+                results: list[dict] = []
+                for i in range(len(tracked)):
+                    track_id = (
+                        int(tracked.tracker_id[i])
+                        if tracked.tracker_id is not None
+                        else -1
+                    )
+                    box = tracked.xyxy[i].tolist()
+                    cls_id = (
+                        int(tracked.class_id[i])
+                        if tracked.class_id is not None
+                        else 0
+                    )
+                    conf = (
+                        float(tracked.confidence[i])
+                        if tracked.confidence is not None
+                        else 0.5
+                    )
+                    src = _find_closest_detection(box, detections, cls_id)
+                    base = src.copy() if src else {}
+                    base.update(
+                        {
+                            "track_id": track_id,
+                            "bbox_xyxy": [int(v) for v in box],
+                            "class_id": cls_id,
+                            "confidence": round(conf, 4),
+                        }
+                    )
+                    results.append(base)
+                if results:
+                    return results
+            except Exception as exc:
+                logger.warning("ByteTrack update failed: %s", exc)
+
+        return self._iou_tracker.update(detections)
 
 
-# --------------------------------------------------------------------------- #
-# Public interface                                                              #
-# --------------------------------------------------------------------------- #
+# Backward-compatible singleton for older CLI modules. New user-facing jobs
+# always instantiate ObjectTracker directly.
+_legacy_tracker: ObjectTracker | None = None
+
 
 def update_tracker(detections: list[dict]) -> list[dict]:
-    """Run ByteTrack; fall back to IoU tracker if unavailable."""
-    bt = _get_bytetrack()
-    if bt is not None:
-        tracked = track_with_bytetrack(detections)
-        if tracked or not detections:
-            return tracked
-        logger.debug("ByteTrack returned empty; using IoU fallback.")
-    return _iou_tracker.update(detections)
+    """Legacy tracker API; prefer ``ObjectTracker().update`` for new jobs."""
+    global _legacy_tracker
+    if _legacy_tracker is None:
+        _legacy_tracker = ObjectTracker()
+    return _legacy_tracker.update(detections)

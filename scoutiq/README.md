@@ -2,6 +2,15 @@
 
 Beginner-friendly Python project for processing WNBA MP4 video clips with OpenCV, YOLO, and tracking tools. The React dashboard and FastAPI backend drive the main workflow; Streamlit remains available as an optional legacy UI.
 
+## Latest dashboard architecture
+
+See [`SESSION_README.md`](SESSION_README.md) for the July 14, 2026 tracking,
+Coach Insights, and asynchronous isolate-preview build. The editable draw.io
+diagram is at
+[`docs/ScoutIQ_Architecture.drawio`](docs/ScoutIQ_Architecture.drawio), with a
+detailed live-flow diagram at
+[`docs/ScoutIQ_VisionPlay_Architecture.drawio`](docs/ScoutIQ_VisionPlay_Architecture.drawio).
+
 ## New modular identity pipeline (6/23/2026)
 
 The repo now includes a runnable, report-aligned v1 pipeline under `src/`:
@@ -535,4 +544,3 @@ src/wnba_player_database.py
 * Connect player search to React dashboard
 * Add player profile pages
 * Build RAG layer for player information retrieval
-
