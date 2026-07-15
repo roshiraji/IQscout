@@ -1,0 +1,18 @@
+# WNBA player tracking with trained NBA loop weights
+# Run from scoutiq/:  python -m src.track.run --config configs/nba_player_tracking.yaml
+
+weights: outputs/nba_training_loop/best_player_detector.pt
+video: "Z:/NBA/Data-Annotations/testruns/videos/6-28.mp4"
+output_dir: outputs/player_tracking/6-28
+
+conf: 0.25
+iou: 0.70
+tracker: botsort.yaml
+save_video: true
+player_class_id: 0   # player
+
+classes:
+  0: player
+  1: referee
+  2: hoop
+  3: ball

@@ -1,0 +1,28 @@
+# Live user-facing player tracking (React dashboard + FastAPI).
+#
+# This drives the ONLINE path: user uploads a clip -> best_player_seg.pt
+# (player-only YOLO-seg) -> exclusions -> ByteTrack -> masks + bbox + stable
+# track IDs -> browser-safe H.264 preview. NO Grounding DINO / SAM2 here.
+#
+# Consumed by src/pipeline/player_track_pipeline.py (imported by app/api_server.py).
+
+# Trained showcase weights (relative to scoutiq/).
+weights: outputs/training_loop/best_player_seg.pt
+
+# Detection thresholds (defaults match configs/showcase_player_seg.yaml).
+conf: 0.25
+iou: 0.70
+
+# Inference device: "0" for first CUDA GPU, "cpu", or "auto".
+device: "0"
+
+# Exclusion JSONs (court ROI / scorebug). Soft-fails to defaults if missing.
+exclusions_dir: data/exclusions
+
+# Overlay + tracking behaviour.
+mask_overlay: true
+mask_smooth_alpha: 0.35
+min_track_frames: 3
+
+# Smoke-test cap; null processes the whole clip.
+max_frames: null

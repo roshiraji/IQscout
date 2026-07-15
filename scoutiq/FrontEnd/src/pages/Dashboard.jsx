@@ -10,6 +10,7 @@ import ProcessingVideoPlayer from "../components/ProcessingVideoPlayer_1";
 
 import PlayerSnapshotSelector from "../components/PlayerSnapshotSelector";
 import TrackingResults from "../components/TrackingResults";
+import EventTable from "../components/EventTable";
 
 
 
@@ -18,6 +19,8 @@ function Dashboard() {
   const [isBusy, setIsBusy] = useState(false);
 
   const [isSavingSelection, setIsSavingSelection] = useState(false);
+
+  const [isAutoTracking, setIsAutoTracking] = useState(false);
 
   const [selectedFileName, setSelectedFileName] = useState("");
 
@@ -241,13 +244,75 @@ function Dashboard() {
 
 
 
+  async function handleAutoTrack() {
+
+    if (!savedVideoPath) {
+
+      setError("Upload and analyze a clip first.");
+
+      return;
+
+    }
+
+    setIsAutoTracking(true);
+
+    setError("");
+
+    setTracking(null);
+
+    setTrackingVideoUrl("");
+
+    try {
+
+      const response = await fetch("/api/track/auto", {
+
+        method: "POST",
+
+        headers: { "Content-Type": "application/json" },
+
+        body: JSON.stringify({ video_path: savedVideoPath }),
+
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+
+        throw new Error(payload.detail || "Auto tracking failed.");
+
+      }
+
+      if (payload.tracking) {
+
+        setTracking(payload.tracking);
+
+        const videoName = payload.tracking.tracking_video.split(/[/\\]/).pop();
+
+        setTrackingVideoUrl(`/api/files/tracking/${encodeURIComponent(videoName)}`);
+
+      }
+
+    } catch (err) {
+
+      setError(err.message || "Auto tracking failed.");
+
+    } finally {
+
+      setIsAutoTracking(false);
+
+    }
+
+  }
+
+
+
   return (
 
     <div className="dashboard">
-
-      <h1>ScoutIQ WNBA Dashboard</h1>
-
-
+      <div className="hero">
+        <h1>ScoutIQ</h1>
+        <p>NBA Vision Analytics Platform</p>
+      </div>
 
       <VideoUpload
 
@@ -284,7 +349,29 @@ function Dashboard() {
 
       />
 
+      {validation?.usable && savedVideoPath && (
+        <div className="card">
+          <h2>Auto-Track Players (Segmentation Model)</h2>
+          <p className="status-text">
+            Detect, segment, and track every player with the trained
+            <code> best_player_seg.pt</code> model (masks + stable IDs, no manual selection).
+          </p>
+          <button
+            type="button"
+            onClick={handleAutoTrack}
+            disabled={isAutoTracking || isBusy}
+          >
+            {isAutoTracking ? "Tracking players…" : "Auto-Track All Players"}
+          </button>
+        </div>
+      )}
+
       <TrackingResults tracking={tracking} videoUrl={trackingVideoUrl} />
+
+      <div className="card video-panel">
+        <h2>Game Events</h2>
+        <EventTable />
+      </div>
 
       <ProcessingVideoPlayer videoUrl={videoUrl} />
 

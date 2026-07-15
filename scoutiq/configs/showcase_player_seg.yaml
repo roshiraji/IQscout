@@ -1,0 +1,27 @@
+# Lean showcase inference (NO Grounding DINO).
+# Run from scoutiq/:  python -m src.showcase run --config configs/showcase_player_seg.yaml
+#
+# UNSEEN CLIP GATE: point `video` at a holdout clip that was NEVER in train/val.
+# Until you have a second clip, you can smoke-test on a short --max-frames run,
+# but do not treat that as the formal gate.
+
+video: "Z:/scoutIQ VisionPlay/Indiana Fever vs. Los Angeles Sparks _ FULL GAME HIGHLIGHTS _ July 8, 2026.mp4"
+# Prefer a different path for the real gate, e.g.:
+# video: "Z:/NBA/holdout/unseen_highlights.mp4"
+
+clip_id: fever_sparks_highlights
+weights: outputs/training_loop/best_player_seg.pt
+output_video: outputs/showcase/unseen_showcase.mp4
+frames_dir: data/frames/showcase/fever_sparks_run
+exclusions_dir: data/exclusions
+
+conf: 0.25
+iou: 0.70
+mask_smooth_alpha: 0.35
+max_frames: null
+write_tracks_json: true
+
+tracker:
+  conf: 0.25
+  iou: 0.70
+  min_track_frames: 3

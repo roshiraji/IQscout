@@ -1,0 +1,67 @@
+# NBA multi-source player training loop
+# Run from scoutiq/:  python -m src.training.nba_player_loop --config configs/nba_player_loop.yaml
+
+data_sources:
+  # Primary video for tracking validation after each training round
+  video: "Z:/NBA/Data-Annotations/testruns/videos/6-28.mp4"
+
+  # Existing YOLO train/val/test export (Grounding DINO notebook output)
+  yolo_dataset: "Z:/NBA/yolo_dataset"
+
+  # Flat YOLO label files (1:1 with frames)
+  raw_labels: "Z:/NBA/raw_labels"
+
+  # Raw extracted frames (not annotated previews)
+  frames_dirs:
+    - "Z:/NBA/Data-Annotations/testruns/frames"
+    - "Z:/scoutIQ VisionPlay/wnba_yolo_runs/6-28/frames"
+
+  # MakeSense-style CSV with pixel bboxes
+  annotations_csv: "Z:/NBA/Data-Annotations/testruns/annotations.csv"
+
+  # Optional legacy Roboflow YOLO zip (frame_00000 naming)
+  legacy_yolo_zip: "Z:/NBA/Data-Annotations/labels_6-28-wbna_2026-06-29-07-40-00_yolo.zip"
+
+  # previews: Z:/NBA/previews  — QA only (boxes drawn); not used as training images
+
+classes:
+  0: player
+  1: referee
+  2: hoop
+  3: ball
+
+split:
+  train: 0.80
+  val: 0.15
+  seed: 42
+
+output:
+  merged_dataset: "data/datasets/nba_player_merged"
+  loop_runs: "outputs/nba_training_loop"
+
+training:
+  model: "yolo11n.pt"
+  epochs_per_round: 40
+  max_rounds: 5
+  imgsz: 960
+
+tracking:
+  conf: 0.25
+  iou: 0.70
+  tracker: "botsort.yaml"
+  max_frames: null   # set e.g. 300 for faster test runs
+
+confidence_targets:
+  min_player_map50: 0.45
+  min_player_precision: 0.40
+  min_player_recall: 0.40
+  min_avg_player_confidence: 0.30
+  min_players_per_frame: 4
+  min_track_length_frames: 10
+  min_frame_coverage: 0.60
+
+# After the loop passes, use configs/nba_player_tracking.yaml with:
+#   python -m src.track.run --config configs/nba_player_tracking.yaml
+deployment:
+  weights: outputs/nba_training_loop/best_player_detector.pt
+  tracking_config: configs/nba_player_tracking.yaml

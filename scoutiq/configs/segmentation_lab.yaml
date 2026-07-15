@@ -1,0 +1,24 @@
+# Segmentation lab — evaluate SAM on your fine-tune clip before the main pipeline.
+#
+# Default clip: Caitlin Clark clip (same reference clip used across ScoutIQ docs).
+# Override with --video or edit fine_tune_clip below.
+
+fine_tune_clip: data/input_videos/Caitlin Clark clip.mp4
+
+# YOLO boxes are used as SAM prompts (same role as the clipping / labeling pipeline).
+yolo_model: yolo26s.pt
+yolo_imgsz: 1280
+yolo_conf: 0.25
+
+# SAM variant: vit_b (fast), vit_l, vit_h (best quality)
+sam_model: vit_b
+
+# Sample every Nth frame from the clip (1 = every frame; higher = faster preview runs)
+frame_stride: 30
+max_frames: 10
+
+# Optional: only evaluate the snapshot frame + boxes from a prior analyze run
+# use_snapshot: true
+# snapshot_json: outputs/player_snapshots/Caitlin Clark clip_snapshot_players.json
+
+output_dir: outputs/segmentation_lab

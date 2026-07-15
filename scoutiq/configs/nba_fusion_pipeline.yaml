@@ -1,0 +1,41 @@
+# Fusion pipeline: trained detector + Grounding DINO + SAM2
+# Run from scoutiq/:  python -m src.fusion.run_pipeline --config configs/nba_fusion_pipeline.yaml
+
+video: "Z:/NBA/Data-Annotations/testruns/videos/6-28.mp4"
+trained_weights: outputs/nba_training_loop/best_player_detector.pt
+output_video: outputs/player_tracking/6-28/6-28_fusion_tracked.mp4
+frames_dir: data/working_frames/fusion/6-28
+roi_path: config/court_roi.json
+
+trained_conf: 0.25
+use_grounding_dino: true
+use_locateanything: false
+use_sam2: true
+sam2_weights: sam2.1_b.pt
+nms_iou: 0.45
+max_frames: null
+
+grounding_dino:
+  config_path: "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+  checkpoint_path: "weights/groundingdino_swint_ogc.pth"
+  box_threshold: 0.30
+  text_threshold: 0.25
+  class_names: [player, referee, ball, hoop]
+  class_prompts:
+    - "all basketball players on the court"
+    - "all basketball referees"
+    - "the basketball"
+    - "basketball hoop"
+
+fusion:
+  match_iou: 0.45
+  min_confidence: 0.22
+  bbox_weight: 0.55
+  mask_weight: 0.25
+  multi_source_weight: 0.20
+
+classes:
+  0: player
+  1: referee
+  2: hoop
+  3: ball

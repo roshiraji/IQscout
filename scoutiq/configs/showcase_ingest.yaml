@@ -1,0 +1,38 @@
+# Multi-clip ingest for player-seg showcase (million-frame-ready layout).
+# Run from scoutiq/:  python -m src.showcase ingest --config configs/showcase_ingest.yaml
+#
+# Both Fever highlight packages are listed below (~10 + ~11.5 min @ 29.97 fps).
+
+data_root: data
+copy_footage: false
+label_stride: 8
+max_label_candidates: 8000
+detect_scene_cuts: true
+val_ratio: 0.15
+seed: 42
+
+# Holdout clips (split: holdout) are extracted but NEVER labeled for training.
+# For a formal unseen gate later, move one clip to holdout or add a third video.
+clips:
+  - path: "Z:/scoutIQ VisionPlay/Indiana Fever vs. Los Angeles Sparks _ FULL GAME HIGHLIGHTS _ July 8, 2026.mp4"
+    split: train
+    game_id: fever_sparks_2026_07_08
+    clip_id: fever_sparks_highlights
+
+  - path: "Z:/scoutIQ VisionPlay/Indiana Fever vs. Phoenix Mercury _ FULL GAME HIGHLIGHTS _ July 9, 2026.mp4"
+    split: train
+    game_id: fever_mercury_2026_07_09
+    clip_id: fever_mercury_highlights
+
+autolabel:
+  output_root: outputs/auto_labels
+  box_threshold: 0.30
+  text_threshold: 0.25
+  min_confidence: 0.25
+  sam2_weights: sam2.1_b.pt
+  write_qa_previews: true
+  max_frames: null   # set e.g. 200 for a smoke test
+  skip_existing: true
+  # During parallel train-on-0, keep both GDINO+SAM2 on GPU 1
+  gdino_device: cuda:1
+  sam_device: cuda:1

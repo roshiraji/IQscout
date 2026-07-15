@@ -17,3 +17,9 @@ fastapi
 uvicorn
 python-multipart
 pydantic
+sportsdataverse
+rapidfuzz
+qdrant-client
+# Segment Anything (local editable install from repo root)
+-e ..
+PyYAML

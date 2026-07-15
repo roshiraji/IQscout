@@ -18,8 +18,8 @@ function VideoUpload({ onAnalyze, isBusy, isSaving = false, selectedFileName }) 
   }
 
   return (
-    <div className="upload-panel">
-      <h2>Upload WNBA Video</h2>
+    <div className="card upload-panel">
+      <h2>Upload NBA Video</h2>
       <p className="upload-hint">MP4 only · 5–15 seconds · then click players to track</p>
       <div className="upload-row">
         <input

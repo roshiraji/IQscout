@@ -44,7 +44,7 @@ function PlayerSnapshotSelector({ snapshot, imageUrl, onConfirm, isSaving }) {
   }
 
   return (
-    <div className="snapshot-panel">
+    <div className="card snapshot-panel">
       <h2>Choose Players to Track</h2>
       <p className="status-text">
         Click a player box on the snapshot (or use the list below). Frame{" "}

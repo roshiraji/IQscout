@@ -22,8 +22,27 @@ from ultralytics import YOLO
 
 from yolo_config import PERSON_CLASS_ID
 
+# scoutiq/ on path so the trained seg-model helpers (src.*) import cleanly
+# whether run via the API or directly from the CLI.
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from src.pipeline.player_track_pipeline import (  # noqa: E402
+    _apply_device,
+    _resolve,
+    _slugify,
+    load_pipeline_config,
+)
+from src.showcase.exclusions import (  # noqa: E402
+    filter_detections,
+    load_exclusion_set,
+    resolve_exclusion_path,
+)
+from src.showcase.run_showcase import detect_players_seg  # noqa: E402
+
 # --- MVP settings ---
-DEFAULT_MODEL = "yolov8n.pt"
+DEFAULT_MODEL = "yolov8n.pt"  # legacy fallback; live path uses best_player_seg.pt
 CONFIDENCE_THRESHOLD = 0.35
 SAMPLE_INTERVAL = 15
 MIN_PREFERRED_PLAYERS = 5
@@ -155,26 +174,51 @@ def parse_person_detections(result, confidence_threshold: float) -> list[PlayerD
     return detections
 
 
-def run_yolo_on_frame(model: YOLO, frame, device: str) -> list[PlayerDetection]:
-    """Run YOLO person detection on a single BGR frame."""
-    results = model(
-        frame,
-        classes=[PERSON_CLASS_ID],
-        device=device,
-        conf=CONFIDENCE_THRESHOLD,
-        verbose=False,
-    )
-    return parse_person_detections(results[0], CONFIDENCE_THRESHOLD)
+def _players_from_seg(detections: list[dict]) -> list[PlayerDetection]:
+    """Convert player-seg detection dicts into labeled PlayerDetection boxes."""
+    players: list[PlayerDetection] = []
+    for det in detections:
+        box = det.get("bbox_xyxy") or []
+        if len(box) < 4:
+            continue
+        x1, y1, x2, y2 = [int(v) for v in box[:4]]
+        players.append(
+            PlayerDetection(
+                label="",
+                confidence=round(float(det.get("confidence") or 0.0), 4),
+                x1=x1,
+                y1=y1,
+                x2=x2,
+                y2=y2,
+                center_x=round((x1 + x2) / 2, 2),
+                center_y=round((y1 + y2) / 2, 2),
+            )
+        )
+
+    # Left-to-right order gives stable Player_1, Player_2 labels for the GUI.
+    players.sort(key=lambda d: d.center_x)
+    for index, player in enumerate(players, start=1):
+        player.label = f"Player_{index}"
+    return players
+
+
+def run_seg_on_frame(model: YOLO, frame, exclusions, conf: float, iou: float) -> list[PlayerDetection]:
+    """Detect on-court players on one BGR frame with best_player_seg.pt + exclusions."""
+    dets = detect_players_seg(model, frame, conf=conf, iou=iou)
+    dets = filter_detections(dets, exclusions, class_names=("player",))
+    return _players_from_seg(dets)
 
 
 def sample_frame_candidates(
     metadata: VideoMetadata,
     model: YOLO,
-    device: str,
+    exclusions,
+    conf: float,
+    iou: float,
 ) -> list[FrameCandidate]:
     """
     Sample every SAMPLE_INTERVAL frames (skipping frame 0 when possible),
-    run YOLO on each, and collect detection counts.
+    run the seg model on each, and collect detection counts.
     """
     cap = cv2.VideoCapture(str(metadata.path))
     if not cap.isOpened():
@@ -198,7 +242,7 @@ def sample_frame_candidates(
 
             frame_number = frame_index + 1
             timestamp_seconds = round(frame_index / metadata.fps, 2)
-            players = run_yolo_on_frame(model, frame, device)
+            players = run_seg_on_frame(model, frame, exclusions, conf, iou)
 
             candidates.append(
                 FrameCandidate(
@@ -323,14 +367,31 @@ def run_snapshot_selection(
         print(f"  FPS: {metadata.fps}  Resolution: {metadata.width}x{metadata.height}")
         print(f"  Frames: {metadata.frame_count}")
 
-    device = resolve_device()
-    if not quiet:
-        print(f"Loading YOLO model: {model_name} (device: {device})")
-    model = load_model(model_name)
+    cfg = load_pipeline_config()
+    weights = _resolve(cfg["weights"])
+    if not weights.is_file():
+        raise FileNotFoundError(
+            f"Trained player-seg weights not found: {weights}. Train best_player_seg.pt first."
+        )
+    conf = float(cfg["conf"])
+    iou = float(cfg["iou"])
+    device = str(cfg.get("device", "0"))
 
     if not quiet:
-        print(f"Sampling every {SAMPLE_INTERVAL} frames (conf >= {CONFIDENCE_THRESHOLD})...")
-    candidates = sample_frame_candidates(metadata, model, device)
+        print(f"Loading player-seg model: {weights.name} (device: {device})")
+    model = YOLO(str(weights))
+    _apply_device(model, device)
+
+    clip_id = _slugify(path.name)
+    excl_path = resolve_exclusion_path(_resolve(cfg["exclusions_dir"]), clip_id)
+    exclusions = load_exclusion_set(
+        excl_path, width=metadata.width, height=metadata.height, clip_id=clip_id
+    )
+
+    if not quiet:
+        print(f"Sampling every {SAMPLE_INTERVAL} frames (conf >= {conf}, exclusions="
+              f"{excl_path.name if excl_path else 'defaults'})...")
+    candidates = sample_frame_candidates(metadata, model, exclusions, conf, iou)
 
     if not candidates:
         raise RuntimeError("No frames could be sampled from the video.")

@@ -17,14 +17,19 @@ from pydantic import BaseModel, Field
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = PROJECT_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+# scoutiq/ on path enables `from src.pipeline...` (seg tracker + showcase reuse);
+# src/ on path keeps the flat MVP imports (track_players, etc.) working.
+for _p in (PROJECT_ROOT, SRC_DIR):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from heatmap import generate_player_heatmap  # noqa: E402
 from player_labeling import run_player_labeling  # noqa: E402
 from player_snapshot_selector import run_snapshot_selection  # noqa: E402
 from track_players import run_player_tracking  # noqa: E402
 from video_intake_filter import save_intake_report, validate_video  # noqa: E402
+
+from src.pipeline.player_track_pipeline import run_player_seg_tracking  # noqa: E402
 
 INPUT_DIR = PROJECT_ROOT / "data" / "input_videos"
 REPORTS_DIR = PROJECT_ROOT / "outputs" / "intake_reports"
@@ -44,6 +49,14 @@ class TrackingSelectionRequest(BaseModel):
     timestamp_seconds: float
     selected_players: list[dict] = Field(default_factory=list)
     run_tracking: bool = True
+
+
+class AutoTrackRequest(BaseModel):
+    """Auto-track every player with the trained seg model (best_player_seg.pt)."""
+
+    video_path: str
+    focus_labels: list[str] = Field(default_factory=list)
+    max_frames: int | None = None
 
 app = FastAPI(title="ScoutIQ API", version="0.1.0")
 
@@ -205,6 +218,41 @@ def save_tracking_selection(body: TrackingSelectionRequest) -> dict:
             ) from exc
 
     return response
+
+
+@app.post("/api/track/auto")
+def auto_track_players(body: AutoTrackRequest) -> dict:
+    """Detect + segment + track ALL players with best_player_seg.pt (no GDINO)."""
+    _ensure_directories()
+
+    video_path = Path(body.video_path)
+    if not video_path.is_file():
+        raise HTTPException(status_code=400, detail=f"Video not found: {video_path}")
+
+    try:
+        summary = run_player_seg_tracking(
+            video_path,
+            focus_labels=body.focus_labels or None,
+            max_frames=body.max_frames,
+            quiet=True,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Auto tracking failed: {exc}",
+        ) from exc
+
+    video_name = Path(summary["tracking_video"]).name
+    return {
+        "message": (
+            f"Auto-tracked {len(summary['track_mapping'])} player(s) "
+            f"across {summary['frames_tracked']} frame(s)."
+        ),
+        "tracking": summary,
+        "tracking_video_filename": video_name,
+    }
 
 
 @app.get("/api/files/tracking/{filename}")

@@ -2,6 +2,71 @@
 
 Beginner-friendly Python project for processing WNBA MP4 video clips with OpenCV, YOLO, and tracking tools. The React dashboard and FastAPI backend drive the main workflow; Streamlit remains available as an optional legacy UI.
 
+## New modular identity pipeline (6/23/2026)
+
+The repo now includes a runnable, report-aligned v1 pipeline under `src/`:
+
+- `python -m src.ingest.extract_frames --video ... --output ...`
+- `python -m src.detect.train --config configs/wnba_players.yaml`
+- `python -m src.track.run --video ... --weights yolo26s.pt --output outputs/identity/<video>/tracking`
+- `python -m src.crops.build_tracklet_crops --video ... --tracks ... --output ...`
+- `python -m src.ocr.run_tracklet_ocr --tracklets ... --output ...`
+- `python -m src.face.embed_tracklets --tracklets ... --output ...`
+- `python -m src.reid.embed_tracklets --tracklets ... --output ...`
+- `python -m src.db.ingest_rosters --season 2026 --roster-dir outputs/identity/rosters`
+- `python -m src.resolver.resolve_game --video-id ... --tracklets ... --ocr ... --face ... --reid ... --rosters ... --output ...`
+- `python -m src.clips.cut_resolved_clips --video ... --tracks ... --resolved ... --output ...`
+- Full orchestration: `python -m src.resolver.run_end_to_end --video data/input_videos/<clip>.mp4 --season 2026 --weights yolo26s.pt`
+- API: `uvicorn src.api.app:app --reload`
+
+Outputs are written under `outputs/identity/`.
+
+## Segment Anything (SAM)
+
+Meta's [Segment Anything](https://github.com/facebookresearch/segment-anything) package lives at the repo root (`segment_anything/`). ScoutIQ wraps it in `src/segmentation/`.
+
+**One-time setup** (from `scoutiq/` with `.venv` active):
+
+```bat
+pip install -e ..[all]
+scripts\download_sam_checkpoint.bat vit_b
+python scripts\verify_sam.py
+```
+
+Checkpoints are stored in `models/sam/` (not committed). Default model is **vit_b** (~357 MB, CUDA when available).
+
+**Use in Python:**
+
+```python
+import cv2
+from src.segmentation import load_sam_predictor, predict_mask_from_box
+
+image = cv2.imread("path/to/frame.jpg")
+mask = predict_mask_from_box(image, [x1, y1, x2, y2])  # boolean HxW array
+```
+
+Larger models: `scripts\download_sam_checkpoint.bat vit_l` or `vit_h`, then pass `model_type="vit_l"` to the helpers.
+
+## Segmentation lab (SAM sandbox)
+
+Isolated evaluation on your **fine-tune clip** before wiring SAM into the main pipeline.
+YOLO boxes are used as SAM prompts; results are saved as side-by-side images + HTML report.
+
+**Config:** `configs/segmentation_lab.yaml` (default clip: `Caitlin Clark clip.mp4`)
+
+```bat
+scripts\run_segmentation_lab.bat
+scripts\run_segmentation_lab.bat --video "data/input_videos/new tune.mp4"
+scripts\run_segmentation_lab.bat --use-snapshot
+python -m src.segmentation_lab.run --max-frames 5 --frame-stride 15
+```
+
+**Outputs:** `outputs/segmentation_lab/<clip_name>/`
+- `index.html` — browser gallery (Original | YOLO boxes | SAM masks)
+- `report.json` — per-frame SAM scores, fill ratios, mask paths
+- `frames/` — comparison JPGs
+- `masks/` — per-player binary mask PNGs
+
 ## Build log — 6/15/2026
 
 Summary of work completed on this date:
@@ -325,6 +390,86 @@ Runtime process IDs are stored in `.scoutiq_runtime/pids.json`. Service logs are
 - **Legacy Streamlit UI:** set `streamlit.enabled` to `true` in `scripts/runtime_config.json`
 
 Launcher settings live in `scripts/runtime_config.json`.
+
+## Staged auto-label pipeline (`src/main.py`)
+
+This repo now includes a staged basketball auto-label CLI designed to keep progress moving even when advanced dependencies are missing.
+
+### Working vertical slice (ready now)
+
+`python src/main.py demo-mock` runs end-to-end with no LocateAnything or SAM2 required:
+
+1. Creates sample frames (or uses existing frames)
+2. Generates mock detections (strict JSON contract)
+3. Exports YOLO detection labels
+4. Draws debug frames
+5. Builds `outputs/review_queue.json`
+6. Builds dataset version `data/datasets/basketball_yolo_seg_v001`
+7. Renders annotated demo videos
+
+### CLI commands
+
+```bash
+python src/main.py init
+python src/main.py set-roi --image data/frames/frame_000001.jpg
+python src/main.py extract --video data/raw_videos/play.mp4 --fps 2
+python src/main.py autolabel --source locateanything
+python src/main.py autolabel --source mock
+python src/main.py debug
+python src/main.py export-yolo-det
+python src/main.py export-yolo-seg
+python src/main.py export-coco
+python src/main.py review-select --percent 20
+python src/main.py review
+python src/main.py build-dataset --version v001
+python src/main.py train --version v001 --epochs 50
+python src/main.py infer --weights outputs/training_runs/run_001/best.pt --video data/raw_videos/play.mp4
+python src/main.py track
+python src/main.py render
+python src/main.py full --video data/raw_videos/play.mp4 --fps 2 --review_percent 20
+python src/main.py demo-mock
+```
+
+### Data contracts
+
+Raw detections are stored per-frame in:
+
+```text
+data/autolabel/raw_predictions/frame_XXXXXX.json
+```
+
+Corrected labels are stored separately (never overwrite raw predictions):
+
+```text
+data/autolabel/corrected_predictions/corrected_labels.json
+```
+
+### Dataset + run versioning
+
+- Dataset versions: `data/datasets/basketball_yolo_seg_v001`, `v002`, ...
+- Training runs: `outputs/training_runs/run_001`, `run_002`, ...
+
+Each dataset version includes:
+- `images/`, `labels/`, `data.yaml`
+- `dataset_manifest.json`
+- `label_source_summary.json`
+- `reviewed_frames.json`
+- `rejected_labels.json`
+
+### Extended troubleshooting (auto-label CLI)
+
+- **ffmpeg not found:** install ffmpeg or rely on OpenCV-only render outputs
+- **CUDA not available:** training automatically falls back to CPU
+- **CUDA out of memory:** training retries with smaller settings (`imgsz=640`, reduced batch)
+- **LocateAnything executable not found:** `autolabel --source locateanything` falls back to mock detections
+- **SAM2 not installed:** `export-yolo-seg` uses box-polygon fallback
+- **Ultralytics not installed:** install with `pip install ultralytics`
+- **labels are empty:** verify `data/frames/*.jpg` exists, then rerun `autolabel` + export
+- **too many crowd detections:** set court ROI with `set-roi` and rerun autolabel
+- **ball not detected:** expected in some motion/blur frames; use review queue + corrections
+- **training starts but mAP is bad:** review labels, increase reviewed sample percent, rebuild dataset version
+- **video render has wrong FPS:** rerun `render --fps <target>`
+- **Windows path problems:** use quoted absolute paths or `pathlib`-style normalized paths
 
 ## What's next
 

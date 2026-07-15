@@ -3,20 +3,22 @@ function TrackingResults({ tracking, videoUrl }) {
     return null;
   }
 
-  const mappedLabels = Object.values(tracking.track_mapping || {});
+  const trackLabels = Object.keys(tracking.track_mapping || {});
+  const isAuto = tracking.auto_tracked === true;
 
   return (
-    <div className="tracking-panel">
+    <div className="card tracking-panel">
       <h2>Player Tracking</h2>
       <p className="status-text">
-        Following {mappedLabels.join(", ")} from frame {tracking.snapshot_frame_number} through
-        the end of the clip.
+        {isAuto
+          ? `Auto-tracked ${trackLabels.length} player(s) with the segmentation model (${tracking.model || "best_player_seg.pt"}) across the clip.`
+          : `Following ${trackLabels.join(", ")} from frame ${tracking.snapshot_frame_number} through the end of the clip, with segmentation masks from ${tracking.model || "best_player_seg.pt"}.`}
       </p>
 
       <div className="metadata-grid">
         <div>
           <strong>Players tracked</strong>
-          <span>{mappedLabels.length}</span>
+          <span>{trackLabels.length}</span>
         </div>
         <div>
           <strong>Frames tracked</strong>

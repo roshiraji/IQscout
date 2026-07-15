@@ -7,7 +7,7 @@ function statusClass(status) {
 function ProcessingStatus({ validation, labeling, error, snapshot }) {
   if (error) {
     return (
-      <div className="result-panel status-rejected">
+      <div className="card result-panel status-rejected">
         <h2>Error</h2>
         <p>{error}</p>
       </div>
@@ -21,7 +21,7 @@ function ProcessingStatus({ validation, labeling, error, snapshot }) {
   const { status, message, metadata, warnings = [], errors = [] } = validation;
 
   return (
-    <div className={`result-panel ${statusClass(status)}`}>
+    <div className={`card result-panel ${statusClass(status)}`}>
       <h2>Intake: {status}</h2>
       <p>{message}</p>
 
