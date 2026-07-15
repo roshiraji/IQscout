@@ -20,6 +20,4 @@ pydantic
 sportsdataverse
 rapidfuzz
 qdrant-client
-# Segment Anything (local editable install from repo root)
--e ..
 PyYAML
