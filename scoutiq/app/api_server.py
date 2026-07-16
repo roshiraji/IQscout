@@ -47,6 +47,7 @@ from video_intake_filter import save_intake_report, validate_video  # noqa: E402
 
 from src.pipeline.player_track_pipeline import run_player_seg_tracking  # noqa: E402
 from src.pipeline.job_manager import get_job_manager  # noqa: E402
+from src.pipeline.resolve_job_identity import resolve_job_identity  # noqa: E402
 
 INPUT_DIR = PROJECT_ROOT / "data" / "input_videos"
 REPORTS_DIR = PROJECT_ROOT / "outputs" / "intake_reports"
@@ -119,6 +120,7 @@ def health() -> dict[str, str | list[str]]:
             "coach_insights",
             "full_clip_player_tracking",
             "identity_attachments",
+            "identity_resolve",
             "intake",
         ],
     }
@@ -246,6 +248,76 @@ def get_tracking_job(job_id: str) -> dict:
             except (OSError, ValueError, json.JSONDecodeError):
                 pass
     return state
+
+
+def _identity_response(job_id: str) -> dict:
+    artifact_dir = get_job_manager().artifact_dir(Path(job_id).name)
+    identity_path = artifact_dir / "identity_attachments.json"
+    if not identity_path.is_file():
+        raise HTTPException(status_code=404, detail="Identity results not ready.")
+    try:
+        payload = json.loads(identity_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail="Could not read identity results.") from exc
+
+    identities = []
+    for item in payload.get("attachments", []):
+        evidence = item.get("evidence") or {}
+        identities.append(
+            {
+                "track_id": item.get("track_id"),
+                "status": item.get("status", "pending"),
+                "player_name": item.get("player_name"),
+                "player_id": item.get("player_id"),
+                "team_id": item.get("team_id"),
+                "jersey_number": item.get("jersey_number"),
+                "confidence": item.get("confidence"),
+                "score_margin": item.get("score_margin"),
+                "ocr_jersey": evidence.get("ocr_jersey"),
+                "ocr_consistency": evidence.get("ocr_consistency"),
+                "candidate_scores": evidence.get("candidate_scores") or [],
+            }
+        )
+    return {
+        "job_id": job_id,
+        "game_context": payload.get("game_context") or {},
+        "identities": identities,
+    }
+
+
+@app.get("/api/identity/{job_id}")
+def get_job_identity(job_id: str) -> dict:
+    """Return roster/OCR identity attachments for a tracking job."""
+    if get_job_manager().get(Path(job_id).name) is None:
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    return _identity_response(job_id)
+
+
+@app.post("/api/identity/{job_id}/resolve")
+def resolve_job_identity_endpoint(job_id: str) -> dict:
+    """Run jersey OCR + roster matching for a completed tracking job."""
+    state = get_job_manager().get(Path(job_id).name)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    if state.get("status") != "ready":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Tracking job is {state.get('status')}; wait until ready.",
+        )
+    try:
+        summary = resolve_job_identity(get_job_manager().artifact_dir(Path(job_id).name))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Identity resolution failed: {exc}",
+        ) from exc
+    return {
+        "message": "Identity resolution complete.",
+        "summary": summary,
+        "identity": _identity_response(job_id),
+    }
 
 
 @app.get("/api/jobs/{job_id}/isolate-status")

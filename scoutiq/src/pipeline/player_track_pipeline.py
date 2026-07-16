@@ -505,6 +505,7 @@ def run_player_seg_tracking(
             if not meta:
                 continue
             group["team_id"] = meta.get("team_id")
+            group["roster_team_id"] = meta.get("roster_team_id")
             group["team_label"] = meta.get("team_label")
             group["jersey_color_name"] = meta.get("jersey_color_name")
             group["overlay_color_hex"] = meta.get("overlay_color_hex")
@@ -893,6 +894,7 @@ def _build_group_snapshot(
                 "member_track_ids": raw_members,
                 "label": label,
                 "team_id": team.get("team_id"),
+                "roster_team_id": team.get("roster_team_id"),
                 "team_label": team.get("team_label"),
                 "jersey_color_name": color_name,
                 "role": role or "player",

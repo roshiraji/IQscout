@@ -7,9 +7,7 @@ invent roster names.
 
 from __future__ import annotations
 
-import logging
-import random
-from typing import Any
+from src.resolver.team_normalizer import roster_team_from_jersey_color
 
 import cv2
 import numpy as np
@@ -221,6 +219,8 @@ def assign_jersey_teams(
     away = (game_context or {}).get("away_team") or None
     red_label = f"Team Red ({home})" if home else "Team Red"
     blue_label = f"Team Blue ({away})" if away else "Team Blue"
+    red_roster_id = roster_team_from_jersey_color("red", game_context)
+    blue_roster_id = roster_team_from_jersey_color("blue", game_context)
 
     group_to_team: dict[int, dict] = {}
     red_ids: list[int] = []
@@ -250,6 +250,7 @@ def assign_jersey_teams(
                 red_ids.append(gid)
                 group_to_team[gid] = {
                     "team_id": TEAM_RED,
+                    "roster_team_id": red_roster_id,
                     "team_label": red_label,
                     "jersey_color_name": "red",
                     "overlay_color_bgr": [int(v) for v in red_bgr],
@@ -260,6 +261,7 @@ def assign_jersey_teams(
                 blue_ids.append(gid)
                 group_to_team[gid] = {
                     "team_id": TEAM_BLUE,
+                    "roster_team_id": blue_roster_id,
                     "team_label": blue_label,
                     "jersey_color_name": "blue",
                     "overlay_color_bgr": [int(v) for v in blue_bgr],
@@ -270,6 +272,7 @@ def assign_jersey_teams(
     teams = [
         {
             "team_id": TEAM_RED,
+            "roster_team_id": red_roster_id,
             "jersey_color_name": "red",
             "label": red_label,
             "overlay_color_bgr": [int(v) for v in DISPLAY_BGR["red"]],
@@ -279,6 +282,7 @@ def assign_jersey_teams(
         },
         {
             "team_id": TEAM_BLUE,
+            "roster_team_id": blue_roster_id,
             "jersey_color_name": "blue",
             "label": blue_label,
             "overlay_color_bgr": [int(v) for v in DISPLAY_BGR["blue"]],

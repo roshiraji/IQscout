@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from src.common_models import ResolvedTracklet
+from src.resolver.team_normalizer import normalize_team_id
 
 
 def _read_json(path: Path):
@@ -26,6 +27,12 @@ def _load_roster(path: Path) -> list[dict]:
     return rows
 
 
+def _jersey_numbers_match(ocr_number: str | None, roster_number: str | None) -> bool:
+    if not ocr_number or roster_number is None:
+        return False
+    return str(roster_number).lstrip("0") == str(ocr_number).lstrip("0")
+
+
 def _mean_cos(a: list[list[float]], b: list[float] | None) -> float:
     if not a or not b:
         return 0.0
@@ -37,6 +44,17 @@ def _mean_cos(a: list[list[float]], b: list[float] | None) -> float:
         r_norm = np.linalg.norm(r) or 1.0
         scores.append(float(np.dot(r, b_arr) / (r_norm * b_norm)))
     return float(np.clip(np.mean(scores), 0.0, 1.0))
+
+
+def _candidate_pool(
+    *,
+    by_team: dict[str, list[dict]],
+    roster: list[dict],
+    team_hint: str | None,
+) -> list[dict]:
+    if team_hint:
+        return by_team.get(team_hint, [])
+    return roster
 
 
 def resolve_game(
@@ -60,25 +78,61 @@ def resolve_game(
     for player in roster:
         by_team[player.get("team_id")].append(player)
 
+    normalized_team_hint = normalize_team_id(team_hint)
+
     results: list[dict] = []
     for track in tracklets:
         tid = int(track["track_id"])
+        track_team_hint = normalize_team_id(track.get("team_hint")) or normalized_team_hint
         ocr_row = ocr.get(tid, {})
         ocr_number = ocr_row.get("jersey_prediction")
         ocr_consistency = float(ocr_row.get("ocr_consistency") or 0.0)
         face_vecs = [row["embedding"] for row in face.get(tid, {}).get("face_embeddings", [])]
         reid_vecs = [row["embedding"] for row in reid.get(tid, {}).get("reid_embeddings", [])]
 
-        candidates = by_team.get(team_hint, roster) if team_hint else roster
+        candidates = _candidate_pool(
+            by_team=by_team,
+            roster=roster,
+            team_hint=track_team_hint,
+        )
+
+        exact_matches = [
+            player
+            for player in candidates
+            if _jersey_numbers_match(ocr_number, player.get("jersey_number"))
+        ]
+        if len(exact_matches) == 1 and ocr_consistency >= 0.60:
+            exact_player = exact_matches[0]
+            resolved = ResolvedTracklet(
+                video_id=video_id,
+                tracklet_id=f"{video_id}_t_{tid:06d}",
+                resolved_player_id=exact_player["player_id"],
+                resolver_confidence=round(ocr_consistency, 4),
+                resolver_score=1.0,
+                score_margin=1.0,
+                candidate_scores=[
+                    {
+                        "player_id": exact_player["player_id"],
+                        "full_name": exact_player["full_name"],
+                        "team_id": exact_player["team_id"],
+                        "jersey_number": exact_player["jersey_number"],
+                        "score": 1.0,
+                    }
+                ],
+                status="resolved",
+                reason="unique_team_jersey_match",
+            )
+            results.append(resolved.model_dump())
+            continue
+
         scored = []
         for player in candidates:
             team_id = player.get("team_id")
             jersey = player.get("jersey_number")
-            s_number = 1.0 if ocr_number and jersey and str(jersey) == str(ocr_number) else 0.0
-            # Face/reid prototypes are optional in v1; default score is zero.
+            s_number = 1.0 if _jersey_numbers_match(ocr_number, jersey) else 0.0
             s_face = _mean_cos(face_vecs, player.get("vectors", {}).get("face"))
             s_reid = _mean_cos(reid_vecs, player.get("vectors", {}).get("reid_proto"))
-            s_team = 1.0 if (team_hint and team_id == team_hint) else 0.0
+            s_team = 1.0 if (track_team_hint and team_id == track_team_hint) else 0.0
             score = (
                 0.40 * s_number
                 + 0.25 * s_face

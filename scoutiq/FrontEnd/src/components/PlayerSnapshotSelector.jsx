@@ -4,16 +4,28 @@ function selectionKey(player) {
   return player?.person_group_id ?? player?.track_id;
 }
 
+function formatIdentityStatus(status) {
+  if (!status || status === "pending") return "Pending";
+  if (status === "resolved") return "Resolved";
+  if (status === "review") return "Review";
+  if (status === "unresolved") return "Unresolved";
+  return status;
+}
+
 function PlayerSnapshotSelector({
   snapshot,
   imageUrl,
   masksImageUrl,
+  jobId,
   onConfirm,
   isSaving,
 }) {
   const [selectedKeys, setSelectedKeys] = useState(() => new Set());
   const [saveMessage, setSaveMessage] = useState("");
   const [viewMode, setViewMode] = useState("labels"); // labels | masks
+  const [identityByTrack, setIdentityByTrack] = useState({});
+  const [identityMessage, setIdentityMessage] = useState("");
+  const [isResolvingIdentity, setIsResolvingIdentity] = useState(false);
 
   const frameWidth = snapshot?.frame_width || 1;
   const frameHeight = snapshot?.frame_height || 1;
@@ -35,7 +47,99 @@ function PlayerSnapshotSelector({
     setSelectedKeys(new Set());
     setSaveMessage("");
     setViewMode("labels");
+    setIdentityMessage("");
   }, [snapshot?.job_id]);
+
+  useEffect(() => {
+    if (!jobId) {
+      setIdentityByTrack({});
+      return undefined;
+    }
+
+    let cancelled = false;
+    async function loadIdentity() {
+      try {
+        const response = await fetch(`/api/identity/${encodeURIComponent(jobId)}`);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          return;
+        }
+        if (cancelled) return;
+        const next = {};
+        for (const item of payload.identities || []) {
+          next[item.track_id] = item;
+        }
+        setIdentityByTrack(next);
+      } catch {
+        // Identity is optional until roster/OCR resolution runs.
+      }
+    }
+
+    loadIdentity();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, snapshot?.job_id]);
+
+  function playerIdentity(player) {
+    const trackId = player?.track_id ?? player?.person_group_id;
+    const remote = identityByTrack[trackId];
+    if (remote) return remote;
+    if (player?.player_name || player?.identity_status) {
+      return {
+        track_id: trackId,
+        status: player.identity_status || "pending",
+        player_name: player.player_name,
+        team_id: player.team_id,
+        jersey_number: player.jersey_number,
+        confidence: player.identity_confidence,
+        ocr_jersey: player.jersey_number,
+      };
+    }
+    return null;
+  }
+
+  function identitySummary(player) {
+    const identity = playerIdentity(player);
+    if (!identity) return null;
+    const name = identity.player_name;
+    const jersey = identity.jersey_number || identity.ocr_jersey;
+    const confidence =
+      identity.confidence != null
+        ? `${Math.round(Number(identity.confidence) * 100)}%`
+        : null;
+    const status = formatIdentityStatus(identity.status);
+    if (!name && !jersey && identity.status === "pending") {
+      return null;
+    }
+    return { name, jersey, confidence, status, teamId: identity.team_id };
+  }
+
+  async function handleResolveIdentity() {
+    if (!jobId) return;
+    setIsResolvingIdentity(true);
+    setIdentityMessage("");
+    try {
+      const response = await fetch(
+        `/api/identity/${encodeURIComponent(jobId)}/resolve`,
+        { method: "POST" }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || "Identity resolution failed.");
+      }
+      const next = {};
+      for (const item of payload.identity?.identities || []) {
+        next[item.track_id] = item;
+      }
+      setIdentityByTrack(next);
+      setIdentityMessage(payload.message || "Identity resolution complete.");
+    } catch (err) {
+      setIdentityMessage(err.message || "Identity resolution failed.");
+    } finally {
+      setIsResolvingIdentity(false);
+    }
+  }
 
   function togglePlayer(key) {
     setSaveMessage("");
@@ -146,6 +250,10 @@ function PlayerSnapshotSelector({
             const height = ((player.y2 - player.y1) / frameHeight) * 100;
 
             const teamColor = player.overlay_color_hex || "#ffffff";
+            const identity = identitySummary(player);
+            const labelText = identity?.name
+              ? `${player.player_name || player.label} → ${identity.name}`
+              : player.player_name || player.label;
             return (
               <button
                 key={key}
@@ -172,7 +280,7 @@ function PlayerSnapshotSelector({
                       : "none",
                 }}
                 onClick={() => togglePlayer(key)}
-                title={`${player.player_name || player.label} (${player.confidence})`}
+                title={`${labelText} (${player.confidence})`}
                 aria-pressed={isSelected}
               >
                 {showLabels && (
@@ -180,7 +288,7 @@ function PlayerSnapshotSelector({
                     className="player-box-label"
                     style={{ background: teamColor, color: "#0a0a0a" }}
                   >
-                    {player.player_name || player.label}
+                    {labelText}
                   </span>
                 )}
               </button>
@@ -194,6 +302,7 @@ function PlayerSnapshotSelector({
           const key = selectionKey(player);
           const isSelected = selectedKeys.has(key);
           const teamColor = player.overlay_color_hex || undefined;
+          const identity = identitySummary(player);
           return (
             <button
               key={key}
@@ -209,14 +318,35 @@ function PlayerSnapshotSelector({
               }
               onClick={() => togglePlayer(key)}
             >
-              {player.player_name || player.label} ({Math.round(player.confidence * 100)}%)
-              {player.team_label ? ` · ${player.team_label}` : ""}
+              <span className="player-chip-title">
+                {player.player_name || player.label} ({Math.round(player.confidence * 100)}%)
+                {player.team_label ? ` · ${player.team_label}` : ""}
+              </span>
+              {identity && (
+                <span className="player-chip-identity">
+                  {identity.name ? `Likely: ${identity.name}` : "Likely identity: —"}
+                  {identity.jersey ? ` · #${identity.jersey}` : ""}
+                  {identity.teamId ? ` · ${identity.teamId}` : ""}
+                  {identity.confidence ? ` · ${identity.confidence}` : ""}
+                  {` · ${identity.status}`}
+                </span>
+              )}
             </button>
           );
         })}
       </div>
 
       <div className="snapshot-actions">
+        {jobId && (
+          <button
+            type="button"
+            className="identity-resolve-button"
+            onClick={handleResolveIdentity}
+            disabled={isResolvingIdentity}
+          >
+            {isResolvingIdentity ? "Resolving identities…" : "Resolve jersey identities"}
+          </button>
+        )}
         <button
           type="button"
           className="confirm-button"
@@ -231,6 +361,7 @@ function PlayerSnapshotSelector({
         </button>
       </div>
 
+      {identityMessage && <p className="snapshot-save-message">{identityMessage}</p>}
       {saveMessage && <p className="snapshot-save-message">{saveMessage}</p>}
     </div>
   );

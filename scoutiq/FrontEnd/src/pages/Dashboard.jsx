@@ -443,6 +443,7 @@ function Dashboard() {
         snapshot={snapshot}
         imageUrl={snapshotImageUrl}
         masksImageUrl={snapshotMasksImageUrl}
+        jobId={jobId}
         onConfirm={handleConfirmSelection}
         isSaving={isSavingSelection}
       />

@@ -51,6 +51,35 @@ def _ocr_read(ocr_engine, image_path: Path) -> tuple[str | None, float]:
         return None, 0.0
 
 
+def _preprocess_torso_for_ocr(torso):
+    """Upscale and boost contrast so small jersey digits are easier to read."""
+    if torso is None or torso.size == 0:
+        return torso
+    enlarged = cv2.resize(
+        torso,
+        None,
+        fx=3,
+        fy=3,
+        interpolation=cv2.INTER_CUBIC,
+    )
+    gray = cv2.cvtColor(enlarged, cv2.COLOR_BGR2GRAY)
+    gray = cv2.equalizeHist(gray)
+    return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+
+def _extract_torso_regions(img):
+    """Return front and back torso strips for OCR."""
+    h, w = img.shape[:2]
+    regions = []
+    for x1_frac, x2_frac in ((0.20, 0.80), (0.15, 0.85)):
+        x1, x2 = int(w * x1_frac), int(w * x2_frac)
+        y1, y2 = int(h * 0.25), int(h * 0.80)
+        torso = img[y1:y2, x1:x2]
+        if torso.size:
+            regions.append(torso)
+    return regions
+
+
 def run_tracklet_ocr(manifest_path: Path, output_path: Path) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     ocr_engine, backend = _init_ocr()
@@ -79,6 +108,22 @@ def run_tracklet_ocr(manifest_path: Path, output_path: Path) -> dict:
                     "torso_crop": str(torso_path.resolve()),
                 }
             )
+            for region_idx, region in enumerate(_extract_torso_regions(img)):
+                prepped = _preprocess_torso_for_ocr(region)
+                prepped_path = crop_path.with_name(
+                    f"{crop_path.stem}_torso_prepped_{region_idx}.jpg"
+                )
+                cv2.imwrite(str(prepped_path), prepped)
+                prepped_value, prepped_conf = _ocr_read(ocr_engine, prepped_path)
+                reads.append(
+                    {
+                        "frame_idx": keyframe["frame_idx"],
+                        "value": prepped_value,
+                        "conf": round(prepped_conf, 4),
+                        "torso_crop": str(prepped_path.resolve()),
+                        "preprocessed": True,
+                    }
+                )
 
         valid_reads = [r for r in reads if r["value"]]
         if valid_reads:
