@@ -24,6 +24,8 @@ class GameContext(BaseModel):
 class IdentityEvidence(BaseModel):
     ocr_jersey: str | None = None
     ocr_consistency: float | None = None
+    identity_evidence_status: str | None = None
+    identity_evidence_reason: str | None = None
     team_hint: str | None = None
     face_score: float | None = None
     reid_score: float | None = None
@@ -41,6 +43,7 @@ class TrackIdentityAttachment(BaseModel):
     jersey_number: str | None = None
     confidence: float | None = None
     score_margin: float | None = None
+    reason: str | None = None
     evidence: IdentityEvidence | None = None
 
 

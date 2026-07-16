@@ -12,6 +12,29 @@ function formatIdentityStatus(status) {
   return status;
 }
 
+function formatIdentityReason(identity) {
+  if (!identity || identity.status === "resolved" || identity.player_name) {
+    return null;
+  }
+  const reason = identity.reason || identity.identity_evidence_reason;
+  if (
+    reason === "no_viable_jersey_crops"
+    || reason === "unreadable_jersey"
+    || reason === "too_small"
+    || reason === "too_blurry"
+    || reason === "low_contrast"
+  ) {
+    return "Identity unresolved — jersey number is not readable in this clip";
+  }
+  if (reason === "insufficient_repeated_agreement") {
+    return "Identity unresolved — jersey OCR did not repeat consistently";
+  }
+  if (identity.status === "unresolved") {
+    return "Identity unresolved — jersey number is not readable in this clip";
+  }
+  return null;
+}
+
 function PlayerSnapshotSelector({
   snapshot,
   imageUrl,
@@ -26,6 +49,8 @@ function PlayerSnapshotSelector({
   const [identityByTrack, setIdentityByTrack] = useState({});
   const [identityMessage, setIdentityMessage] = useState("");
   const [isResolvingIdentity, setIsResolvingIdentity] = useState(false);
+  const [manualJerseys, setManualJerseys] = useState({});
+  const [manualResolvingTrack, setManualResolvingTrack] = useState(null);
 
   const frameWidth = snapshot?.frame_width || 1;
   const frameHeight = snapshot?.frame_height || 1;
@@ -48,6 +73,7 @@ function PlayerSnapshotSelector({
     setSaveMessage("");
     setViewMode("labels");
     setIdentityMessage("");
+    setManualJerseys({});
   }, [snapshot?.job_id]);
 
   useEffect(() => {
@@ -94,6 +120,7 @@ function PlayerSnapshotSelector({
         jersey_number: player.jersey_number,
         confidence: player.identity_confidence,
         ocr_jersey: player.jersey_number,
+        reason: player.identity_reason,
       };
     }
     return null;
@@ -109,10 +136,53 @@ function PlayerSnapshotSelector({
         ? `${Math.round(Number(identity.confidence) * 100)}%`
         : null;
     const status = formatIdentityStatus(identity.status);
+    const unreadableMessage = formatIdentityReason(identity);
     if (!name && !jersey && identity.status === "pending") {
       return null;
     }
-    return { name, jersey, confidence, status, teamId: identity.team_id };
+    return {
+      name,
+      jersey,
+      confidence,
+      status,
+      teamId: identity.team_id,
+      unreadableMessage,
+    };
+  }
+
+  async function handleManualResolve(trackId) {
+    if (!jobId) return;
+    const jersey = (manualJerseys[trackId] || "").trim();
+    if (!jersey) {
+      setIdentityMessage("Enter a jersey number before resolving.");
+      return;
+    }
+    setManualResolvingTrack(trackId);
+    setIdentityMessage("");
+    try {
+      const response = await fetch(
+        `/api/identity/${encodeURIComponent(jobId)}/manual-jersey`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ track_id: trackId, jersey_number: jersey }),
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || "Manual jersey resolution failed.");
+      }
+      const next = {};
+      for (const item of payload.identity?.identities || []) {
+        next[item.track_id] = item;
+      }
+      setIdentityByTrack(next);
+      setIdentityMessage(payload.message || "Manual jersey resolution complete.");
+    } catch (err) {
+      setIdentityMessage(err.message || "Manual jersey resolution failed.");
+    } finally {
+      setManualResolvingTrack(null);
+    }
   }
 
   async function handleResolveIdentity() {
@@ -324,17 +394,74 @@ function PlayerSnapshotSelector({
               </span>
               {identity && (
                 <span className="player-chip-identity">
-                  {identity.name ? `Likely: ${identity.name}` : "Likely identity: —"}
-                  {identity.jersey ? ` · #${identity.jersey}` : ""}
-                  {identity.teamId ? ` · ${identity.teamId}` : ""}
-                  {identity.confidence ? ` · ${identity.confidence}` : ""}
-                  {` · ${identity.status}`}
+                  {identity.unreadableMessage
+                    ? identity.unreadableMessage
+                    : identity.name
+                      ? `Likely: ${identity.name}`
+                      : "Likely identity: —"}
+                  {!identity.unreadableMessage && identity.jersey ? ` · #${identity.jersey}` : ""}
+                  {!identity.unreadableMessage && identity.teamId ? ` · ${identity.teamId}` : ""}
+                  {!identity.unreadableMessage && identity.confidence ? ` · ${identity.confidence}` : ""}
+                  {!identity.unreadableMessage ? ` · ${identity.status}` : ""}
                 </span>
               )}
             </button>
           );
         })}
       </div>
+
+      {jobId && (
+        <div className="identity-manual-panel">
+          <h3>Manual jersey fallback</h3>
+          <p className="status-text">
+            When automatic OCR cannot read a number, enter the jersey you see on
+            screen. ScoutIQ will match team context + roster safely.
+          </p>
+          <div className="identity-manual-list">
+            {players
+              .filter((player) => player.role !== "official")
+              .map((player) => {
+                const trackId = player.track_id ?? player.person_group_id;
+                const teamLabel =
+                  player.team_label
+                  || player.roster_team_id
+                  || player.jersey_color_name
+                  || "Unknown team";
+                return (
+                  <div key={trackId} className="identity-manual-row">
+                    <span className="identity-manual-label">
+                      {player.label} · {teamLabel}
+                    </span>
+                    <label className="identity-manual-input-wrap">
+                      <span className="sr-only">Jersey number for {player.label}</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className="identity-manual-input"
+                        placeholder="Jersey #"
+                        value={manualJerseys[trackId] || ""}
+                        onChange={(event) =>
+                          setManualJerseys((current) => ({
+                            ...current,
+                            [trackId]: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="identity-manual-button"
+                      disabled={manualResolvingTrack === trackId}
+                      onClick={() => handleManualResolve(trackId)}
+                    >
+                      {manualResolvingTrack === trackId ? "Resolving…" : "Resolve"}
+                    </button>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      )}
 
       <div className="snapshot-actions">
         {jobId && (

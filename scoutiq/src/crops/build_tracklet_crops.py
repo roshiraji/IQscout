@@ -25,12 +25,22 @@ def _blur_score(image) -> float:
     return float(np.clip(1.0 - min(variance / 500.0, 1.0), 0.0, 1.0))
 
 
+def _is_large_enough_for_jersey(
+    xyxy: list[float],
+    *,
+    min_height: int = 140,
+    min_width: int = 55,
+) -> bool:
+    x1, y1, x2, y2 = xyxy
+    return (y2 - y1) >= min_height and (x2 - x1) >= min_width
+
+
 def _score(meta: dict) -> float:
     return (
-        0.35 * meta["det_conf"]
-        + 0.30 * meta["bbox_area_norm"]
-        + 0.20 * (1.0 - meta["blur_score"])
-        + 0.15 * meta["temporal_bonus"]
+        0.15 * meta["det_conf"]
+        + 0.50 * meta["bbox_area_norm"]
+        + 0.30 * (1.0 - meta["blur_score"])
+        + 0.05 * meta["temporal_bonus"]
     )
 
 
@@ -39,8 +49,8 @@ def build_tracklet_crops(
     video: Path,
     tracks_json: Path,
     output_dir: Path,
-    top_k: int = 12,
-    min_spacing_frames: int = 8,
+    top_k: int = 24,
+    min_spacing_frames: int = 4,
 ) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     tracklets_dir = output_dir / "tracklets"
@@ -78,6 +88,8 @@ def build_tracklet_crops(
             y1 = max(0, min(y1, height - 1))
             x2 = max(x1 + 1, min(x2, width))
             y2 = max(y1 + 1, min(y2, height))
+            if not _is_large_enough_for_jersey([x1, y1, x2, y2]):
+                continue
             crop = frame[y1:y2, x1:x2]
             meta = {
                 "track_id": tid,
@@ -153,8 +165,8 @@ def main() -> None:
     parser.add_argument("--video", required=True)
     parser.add_argument("--tracks", required=True, help="Path to tracks.json")
     parser.add_argument("--output", required=True, help="Output directory")
-    parser.add_argument("--top-k", type=int, default=12)
-    parser.add_argument("--min-spacing", type=int, default=8)
+    parser.add_argument("--top-k", type=int, default=24)
+    parser.add_argument("--min-spacing", type=int, default=4)
     args = parser.parse_args()
     summary = build_tracklet_crops(
         video=Path(args.video),

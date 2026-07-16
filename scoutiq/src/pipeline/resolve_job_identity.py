@@ -11,7 +11,7 @@ from src.face.embed_tracklets import embed_tracklets as embed_faces
 from src.ocr.run_tracklet_ocr import run_tracklet_ocr
 from src.pipeline.identity_contracts import IdentityEvidence, TrackIdentityAttachment
 from src.reid.embed_tracklets import embed_tracklets as embed_reid
-from src.resolver.resolve_game import resolve_game
+from src.resolver.resolve_game import _jersey_numbers_match, resolve_game
 from src.resolver.team_normalizer import roster_team_from_jersey_color
 
 
@@ -147,7 +147,9 @@ def _update_identity_attachments(
         evidence = IdentityEvidence(
             ocr_jersey=ocr_row.get("jersey_prediction"),
             ocr_consistency=ocr_row.get("ocr_consistency"),
-            team_hint=top.get("team_id"),
+            identity_evidence_status=ocr_row.get("identity_evidence_status"),
+            identity_evidence_reason=ocr_row.get("identity_evidence_reason"),
+            team_hint=top.get("team_id") or ocr_row.get("team_hint"),
             candidate_scores=resolved.get("candidate_scores") or [],
             keyframe_paths=[
                 kf.get("crop_path", "")
@@ -165,6 +167,7 @@ def _update_identity_attachments(
             jersey_number=top.get("jersey_number") or roster_row.get("jersey_number"),
             confidence=resolved.get("resolver_confidence"),
             score_margin=resolved.get("score_margin"),
+            reason=resolved.get("reason"),
             evidence=evidence,
         )
         attachments.append(attachment.model_dump())
@@ -216,8 +219,6 @@ def resolve_job_identity(
         video=video_path,
         tracks_json=tracks_json,
         output_dir=crops_dir,
-        top_k=10,
-        min_spacing_frames=8,
     )
     manifest_path = crops_dir / "tracklet_keyframes.json"
     team_hints = _team_hint_by_group(artifact_dir, game_context)
@@ -257,4 +258,130 @@ def resolve_job_identity(
         "resolved_tracklets": str(resolved_path.resolve()),
         "ocr": ocr_summary,
         "resolver": resolver_summary,
+    }
+
+
+def resolve_manual_jersey(
+    artifact_dir: Path,
+    *,
+    track_id: int,
+    jersey_number: str,
+    season: int = 2026,
+    roster_dir: Path | None = None,
+) -> dict:
+    """Resolve one tracked person from a user-entered jersey number."""
+    artifact_dir = artifact_dir.resolve()
+    job_id = artifact_dir.name
+    identity_path = artifact_dir / "identity_attachments.json"
+    if not identity_path.is_file():
+        raise FileNotFoundError(f"Missing identity attachments: {identity_path}")
+
+    identity_doc = _read_json(identity_path)
+    game_context = identity_doc.get("game_context") or {}
+    team_hints = _team_hint_by_group(artifact_dir, game_context)
+    team_hint = team_hints.get(int(track_id))
+    if not team_hint:
+        raise ValueError(
+            f"No roster team mapping for person #{track_id}. "
+            "Enter home/away teams when uploading the clip."
+        )
+
+    roster_root = roster_dir or (artifact_dir.parents[1] / "identity" / "rosters")
+    roster_jsonl = roster_root / f"wnba_rosters_{season}.jsonl"
+    if not roster_jsonl.is_file():
+        from src.db.ingest_rosters import ingest_rosters
+
+        ingest_rosters(season, roster_jsonl)
+
+    candidates = []
+    with roster_jsonl.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            player = json.loads(line)
+            if player.get("team_id") != team_hint:
+                continue
+            if _jersey_numbers_match(jersey_number, player.get("jersey_number")):
+                candidates.append(player)
+
+    if len(candidates) != 1:
+        raise ValueError(
+            f"Jersey #{jersey_number} on {team_hint} matched "
+            f"{len(candidates)} roster players; expected exactly one."
+        )
+
+    player = candidates[0]
+    candidate_score = {
+        "player_id": player["player_id"],
+        "full_name": player["full_name"],
+        "team_id": player["team_id"],
+        "jersey_number": player["jersey_number"],
+        "score": 1.0,
+    }
+    attachments = []
+    updated = False
+    for item in identity_doc.get("attachments", []):
+        if int(item["track_id"]) != int(track_id):
+            attachments.append(item)
+            continue
+        evidence = item.get("evidence") or {}
+        attachments.append(
+            TrackIdentityAttachment(
+                job_id=job_id,
+                track_id=int(track_id),
+                status="resolved",
+                player_id=player["player_id"],
+                player_name=player["full_name"],
+                team_id=player["team_id"],
+                jersey_number=player["jersey_number"],
+                confidence=1.0,
+                score_margin=1.0,
+                reason="manual_jersey_entry",
+                evidence=IdentityEvidence(
+                    ocr_jersey=str(jersey_number),
+                    ocr_consistency=1.0,
+                    identity_evidence_status="readable",
+                    identity_evidence_reason="manual_jersey_entry",
+                    team_hint=team_hint,
+                    candidate_scores=[candidate_score],
+                ),
+            ).model_dump()
+        )
+        updated = True
+
+    if not updated:
+        attachments.append(
+            TrackIdentityAttachment(
+                job_id=job_id,
+                track_id=int(track_id),
+                status="resolved",
+                player_id=player["player_id"],
+                player_name=player["full_name"],
+                team_id=player["team_id"],
+                jersey_number=player["jersey_number"],
+                confidence=1.0,
+                score_margin=1.0,
+                reason="manual_jersey_entry",
+                evidence=IdentityEvidence(
+                    ocr_jersey=str(jersey_number),
+                    ocr_consistency=1.0,
+                    identity_evidence_status="readable",
+                    identity_evidence_reason="manual_jersey_entry",
+                    team_hint=team_hint,
+                    candidate_scores=[candidate_score],
+                ),
+            ).model_dump()
+        )
+
+    identity_doc["attachments"] = attachments
+    identity_path.write_text(json.dumps(identity_doc, indent=2), encoding="utf-8")
+    return {
+        "job_id": job_id,
+        "track_id": int(track_id),
+        "player_name": player["full_name"],
+        "team_id": player["team_id"],
+        "jersey_number": player["jersey_number"],
+        "status": "resolved",
+        "reason": "manual_jersey_entry",
     }

@@ -52,8 +52,8 @@ def run_pipeline(video: Path, season: int, weights: str, output_root: Path, team
         video=video,
         tracks_json=tracking_dir / "tracks.json",
         output_dir=crops_dir,
-        top_k=10,
-        min_spacing_frames=8,
+        top_k=24,
+        min_spacing_frames=4,
     )
     roster_summary = ingest_rosters(season=season, output_path=roster_dir / f"wnba_rosters_{season}.jsonl")
     o_summary = run_tracklet_ocr(crops_dir / "tracklet_keyframes.json", evidence_dir / "ocr.json")

@@ -47,7 +47,7 @@ from video_intake_filter import save_intake_report, validate_video  # noqa: E402
 
 from src.pipeline.player_track_pipeline import run_player_seg_tracking  # noqa: E402
 from src.pipeline.job_manager import get_job_manager  # noqa: E402
-from src.pipeline.resolve_job_identity import resolve_job_identity  # noqa: E402
+from src.pipeline.resolve_job_identity import resolve_job_identity, resolve_manual_jersey  # noqa: E402
 
 INPUT_DIR = PROJECT_ROOT / "data" / "input_videos"
 REPORTS_DIR = PROJECT_ROOT / "outputs" / "intake_reports"
@@ -78,6 +78,13 @@ class AutoTrackRequest(BaseModel):
     video_path: str
     focus_labels: list[str] = Field(default_factory=list)
     max_frames: int | None = None
+
+
+class ManualJerseyRequest(BaseModel):
+    """User-entered jersey number for one tracked person."""
+
+    track_id: int
+    jersey_number: str
 
 app = FastAPI(title="ScoutIQ API", version="0.1.0")
 
@@ -243,6 +250,7 @@ def get_tracking_job(job_id: str) -> dict:
                                 "team_id": attachment.get("team_id"),
                                 "jersey_number": attachment.get("jersey_number"),
                                 "identity_confidence": attachment.get("confidence"),
+                                "identity_reason": attachment.get("reason"),
                             }
                         )
             except (OSError, ValueError, json.JSONDecodeError):
@@ -273,8 +281,11 @@ def _identity_response(job_id: str) -> dict:
                 "jersey_number": item.get("jersey_number"),
                 "confidence": item.get("confidence"),
                 "score_margin": item.get("score_margin"),
+                "reason": item.get("reason"),
                 "ocr_jersey": evidence.get("ocr_jersey"),
                 "ocr_consistency": evidence.get("ocr_consistency"),
+                "identity_evidence_status": evidence.get("identity_evidence_status"),
+                "identity_evidence_reason": evidence.get("identity_evidence_reason"),
                 "candidate_scores": evidence.get("candidate_scores") or [],
             }
         )
@@ -316,6 +327,42 @@ def resolve_job_identity_endpoint(job_id: str) -> dict:
     return {
         "message": "Identity resolution complete.",
         "summary": summary,
+        "identity": _identity_response(job_id),
+    }
+
+
+@app.post("/api/identity/{job_id}/manual-jersey")
+def resolve_manual_jersey_endpoint(job_id: str, body: ManualJerseyRequest) -> dict:
+    """Resolve one person from a manually entered jersey number."""
+    state = get_job_manager().get(Path(job_id).name)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    if state.get("status") != "ready":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Tracking job is {state.get('status')}; wait until ready.",
+        )
+    jersey = body.jersey_number.strip()
+    if not jersey:
+        raise HTTPException(status_code=400, detail="Jersey number is required.")
+    try:
+        result = resolve_manual_jersey(
+            get_job_manager().artifact_dir(Path(job_id).name),
+            track_id=body.track_id,
+            jersey_number=jersey,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Manual jersey resolution failed: {exc}",
+        ) from exc
+    return {
+        "message": f"Resolved person #{body.track_id} as {result['player_name']}.",
+        "result": result,
         "identity": _identity_response(job_id),
     }
 

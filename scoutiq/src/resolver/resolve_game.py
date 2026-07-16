@@ -85,6 +85,26 @@ def resolve_game(
         tid = int(track["track_id"])
         track_team_hint = normalize_team_id(track.get("team_hint")) or normalized_team_hint
         ocr_row = ocr.get(tid, {})
+        evidence_status = ocr_row.get("identity_evidence_status", "unreadable")
+        if evidence_status != "readable":
+            results.append(
+                ResolvedTracklet(
+                    video_id=video_id,
+                    tracklet_id=f"{video_id}_t_{tid:06d}",
+                    resolved_player_id=None,
+                    resolver_confidence=0.0,
+                    resolver_score=None,
+                    score_margin=0.0,
+                    candidate_scores=[],
+                    status="unresolved",
+                    reason=ocr_row.get(
+                        "identity_evidence_reason",
+                        "unreadable_jersey",
+                    ),
+                ).model_dump()
+            )
+            continue
+
         ocr_number = ocr_row.get("jersey_prediction")
         ocr_consistency = float(ocr_row.get("ocr_consistency") or 0.0)
         face_vecs = [row["embedding"] for row in face.get(tid, {}).get("face_embeddings", [])]

@@ -31,11 +31,9 @@ def _init_ocr():
 
 def _ocr_read(ocr_engine, image_path: Path) -> tuple[str | None, float]:
     if ocr_engine is None:
-        # fallback: no OCR dependency installed
         return None, 0.0
     try:
         result = ocr_engine.predict(str(image_path))
-        # PaddleOCR v3 nested structure
         texts: list[tuple[str, float]] = []
         for line in result or []:
             for item in line or []:
@@ -49,6 +47,29 @@ def _ocr_read(ocr_engine, image_path: Path) -> tuple[str | None, float]:
         return _extract_digits(best_text), conf
     except Exception:
         return None, 0.0
+
+
+def _crop_is_ocr_viable(torso) -> tuple[bool, str]:
+    if torso is None or torso.size == 0:
+        return False, "empty_crop"
+
+    height, width = torso.shape[:2]
+
+    if height < 70 or width < 35:
+        return False, "too_small"
+
+    gray = cv2.cvtColor(torso, cv2.COLOR_BGR2GRAY)
+    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+    if sharpness < 25:
+        return False, "too_blurry"
+
+    contrast = float(gray.std())
+
+    if contrast < 18:
+        return False, "low_contrast"
+
+    return True, "usable"
 
 
 def _preprocess_torso_for_ocr(torso):
@@ -89,7 +110,6 @@ def run_tracklet_ocr(manifest_path: Path, output_path: Path) -> dict:
         reads = []
         for keyframe in track.get("keyframes", []):
             crop_path = Path(keyframe["crop_path"])
-            # read torso region only: center vertical strip for jersey
             img = cv2.imread(str(crop_path))
             if img is None:
                 continue
@@ -99,13 +119,19 @@ def run_tracklet_ocr(manifest_path: Path, output_path: Path) -> dict:
             torso = img[y1:y2, x1:x2]
             torso_path = crop_path.with_name(crop_path.stem + "_torso.jpg")
             cv2.imwrite(str(torso_path), torso)
-            value, conf = _ocr_read(ocr_engine, torso_path)
+            is_viable, viability_reason = _crop_is_ocr_viable(torso)
+            if is_viable:
+                value, conf = _ocr_read(ocr_engine, torso_path)
+            else:
+                value, conf = None, 0.0
             reads.append(
                 {
                     "frame_idx": keyframe["frame_idx"],
                     "value": value,
                     "conf": round(conf, 4),
                     "torso_crop": str(torso_path.resolve()),
+                    "ocr_viable": is_viable,
+                    "viability_reason": viability_reason,
                 }
             )
             for region_idx, region in enumerate(_extract_torso_regions(img)):
@@ -114,7 +140,14 @@ def run_tracklet_ocr(manifest_path: Path, output_path: Path) -> dict:
                     f"{crop_path.stem}_torso_prepped_{region_idx}.jpg"
                 )
                 cv2.imwrite(str(prepped_path), prepped)
-                prepped_value, prepped_conf = _ocr_read(ocr_engine, prepped_path)
+                is_viable, viability_reason = _crop_is_ocr_viable(prepped)
+                if is_viable:
+                    prepped_value, prepped_conf = _ocr_read(
+                        ocr_engine,
+                        prepped_path,
+                    )
+                else:
+                    prepped_value, prepped_conf = None, 0.0
                 reads.append(
                     {
                         "frame_idx": keyframe["frame_idx"],
@@ -122,23 +155,54 @@ def run_tracklet_ocr(manifest_path: Path, output_path: Path) -> dict:
                         "conf": round(prepped_conf, 4),
                         "torso_crop": str(prepped_path.resolve()),
                         "preprocessed": True,
+                        "ocr_viable": is_viable,
+                        "viability_reason": viability_reason,
                     }
                 )
 
-        valid_reads = [r for r in reads if r["value"]]
+        valid_reads = [
+            r
+            for r in reads
+            if r.get("value")
+            and r.get("conf", 0.0) >= 0.50
+            and r.get("ocr_viable", True)
+        ]
         if valid_reads:
             weighted = Counter()
-            for r in valid_reads:
-                weighted[r["value"]] += max(r["conf"], 0.05)
+            for read in valid_reads:
+                weighted[read["value"]] += max(read["conf"], 0.05)
             jersey, score = weighted.most_common(1)[0]
-            consistency = float(score / max(0.001, sum(weighted.values())))
+            agreeing_reads = [
+                read for read in valid_reads
+                if read["value"] == jersey
+            ]
+            consistency = float(
+                score / max(0.001, sum(weighted.values()))
+            )
+            if len(agreeing_reads) < 2 or consistency < 0.60:
+                jersey = None
+                status = "unreadable"
+                reason = "insufficient_repeated_agreement"
+            else:
+                status = "readable"
+                reason = "repeated_ocr_agreement"
         else:
-            jersey, consistency = None, 0.0
+            jersey = None
+            consistency = 0.0
+            status = "unreadable"
+            reason = "no_viable_jersey_crops"
+
         out_rows.append(
             {
                 "track_id": track_id,
                 "jersey_prediction": jersey,
                 "ocr_consistency": round(consistency, 4),
+                "identity_evidence_status": status,
+                "identity_evidence_reason": reason,
+                "viable_crop_count": sum(
+                    1 for read in reads
+                    if read.get("ocr_viable", True)
+                ),
                 "ocr_reads": reads,
             }
         )

@@ -7,10 +7,14 @@ invent roster names.
 
 from __future__ import annotations
 
-from src.resolver.team_normalizer import roster_team_from_jersey_color
+import logging
+import random
+from typing import Any
 
 import cv2
 import numpy as np
+
+from src.resolver.team_normalizer import roster_team_from_jersey_color
 
 logger = logging.getLogger(__name__)
 
