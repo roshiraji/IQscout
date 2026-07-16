@@ -11,7 +11,7 @@ conf: 0.25
 iou: 0.70
 
 # Inference device: "0" for first CUDA GPU, "cpu", or "auto".
-device: "0"
+device: "cpu"
 
 # Exclusion JSONs (court ROI / scorebug). Soft-fails to defaults if missing.
 exclusions_dir: data/exclusions
@@ -22,7 +22,7 @@ mask_smooth_alpha: 0.35
 min_track_frames: 3
 
 # Smoke-test cap; null processes the whole clip.
-max_frames: null
+max_frames: 100
 
 # Online tracker (isolated per job). bytetrack is the default; botsort is
 # reserved for a future optional path. Continuity is primarily improved by
