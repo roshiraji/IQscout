@@ -1,0 +1,48 @@
+# v2 multi-game ingest: all unique training videos (Aces file is duplicated on
+# disk — MD5-identical copies — so it is ingested once).
+# Run from scoutiq/:  ..\.venv\Scripts\python.exe -m src.showcase ingest --config configs/showcase_ingest_v2.yaml
+
+data_root: data
+copy_footage: false
+label_stride: 8
+max_label_candidates: 8000
+detect_scene_cuts: true
+val_ratio: 0.15
+seed: 42
+
+# v2 dataset: separate folder, scene-segment split (no adjacent-frame leakage,
+# every game contributes to train AND val).
+dataset_name: nba_player_seg_v2
+scene_split: true
+
+# All games participate in training per project requirement; validation is
+# held out at the scene-segment level (see build-dataset scene_split) instead
+# of holding out a whole game.
+clips:
+  - path: "Z:/scoutIQ VisionPlay/input videos for training/Indiana Fever vs. Los Angeles Sparks _ FULL GAME HIGHLIGHTS _ July 8, 2026.mp4"
+    split: train
+    game_id: fever_sparks_2026_07_08
+    clip_id: fever_sparks_highlights
+
+  - path: "Z:/scoutIQ VisionPlay/input videos for training/Indiana Fever vs. Phoenix Mercury _ FULL GAME HIGHLIGHTS _ July 9, 2026.mp4"
+    split: train
+    game_id: fever_mercury_2026_07_09
+    clip_id: fever_mercury_highlights
+
+  - path: "Z:/scoutIQ VisionPlay/input videos for training/Indiana Fever vs. Las Vegas Aces _ FULL GAME HIGHLIGHTS _ July 12, 2026.mp4"
+    split: train
+    game_id: fever_aces_2026_07_12
+    clip_id: fever_aces_highlights
+
+autolabel:
+  output_root: outputs/auto_labels
+  box_threshold: 0.30
+  text_threshold: 0.25
+  min_confidence: 0.25
+  sam2_weights: sam2.1_b.pt
+  write_qa_previews: true
+  max_frames: null   # set e.g. 200 for a smoke test
+  skip_existing: true
+  # Single-GPU box: run GDINO + SAM2 on cuda:0.
+  gdino_device: cuda:0
+  sam_device: cuda:0

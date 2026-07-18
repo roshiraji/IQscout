@@ -10,6 +10,7 @@ from src.crops.build_tracklet_crops import build_tracklet_crops
 from src.face.embed_tracklets import embed_tracklets as embed_faces
 from src.ocr.run_tracklet_ocr import run_tracklet_ocr
 from src.pipeline.identity_contracts import IdentityEvidence, TrackIdentityAttachment
+from src.pipeline.player_track_pipeline import load_pipeline_config
 from src.reid.embed_tracklets import embed_tracklets as embed_reid
 from src.resolver.resolve_game import _jersey_numbers_match, resolve_game
 from src.resolver.team_normalizer import roster_team_from_jersey_color
@@ -17,6 +18,39 @@ from src.resolver.team_normalizer import roster_team_from_jersey_color
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _jersey_ocr_config(config: dict | None = None) -> dict:
+    """Load identity.jersey_ocr settings from player_tracking_mvp.yaml."""
+    cfg = config if config is not None else load_pipeline_config()
+    identity = cfg.get("identity") or {}
+    return dict(identity.get("jersey_ocr") or {})
+
+
+def _official_group_ids(artifact_dir: Path) -> set[int]:
+    """Person groups marked official (or white jersey) — skip jersey OCR."""
+    excluded: set[int] = set()
+    person_groups_path = artifact_dir / "person_groups.json"
+    if person_groups_path.is_file():
+        payload = _read_json(person_groups_path)
+        for group in payload.get("person_groups") or []:
+            role = str(group.get("role") or "").lower()
+            color = str(group.get("jersey_color_name") or "").lower()
+            if role == "official" or color == "white":
+                excluded.add(int(group["person_group_id"]))
+        return excluded
+
+    snapshot_path = artifact_dir / "snapshot.json"
+    if snapshot_path.is_file():
+        snapshot = _read_json(snapshot_path)
+        for player in snapshot.get("players") or []:
+            role = str(player.get("role") or "").lower()
+            color = str(player.get("jersey_color_name") or "").lower()
+            if role == "official" or color == "white":
+                gid = player.get("person_group_id") or player.get("track_id")
+                if gid is not None:
+                    excluded.add(int(gid))
+    return excluded
 
 
 def _export_person_group_tracks(tracks_jsonl: Path, output_path: Path) -> Path:
@@ -209,22 +243,32 @@ def resolve_job_identity(
 
         ingest_rosters(season, roster_jsonl)
 
+    jersey_ocr = _jersey_ocr_config()
     identity_work = artifact_dir / "identity"
     crops_dir = identity_work / "crops"
     evidence_dir = identity_work / "evidence"
     tracks_json = identity_work / "tracks.json"
     _export_person_group_tracks(tracks_jsonl, tracks_json)
 
+    exclude_ids = _official_group_ids(artifact_dir)
     build_tracklet_crops(
         video=video_path,
         tracks_json=tracks_json,
         output_dir=crops_dir,
+        top_k=int(jersey_ocr.get("max_candidates_per_person") or 48),
+        min_spacing_frames=int(jersey_ocr.get("min_spacing_frames") or 3),
+        exclude_track_ids=exclude_ids,
+        jersey_ocr=jersey_ocr,
     )
     manifest_path = crops_dir / "tracklet_keyframes.json"
     team_hints = _team_hint_by_group(artifact_dir, game_context)
     _apply_team_hints(manifest_path, team_hints)
 
-    ocr_summary = run_tracklet_ocr(manifest_path, evidence_dir / "ocr.json")
+    ocr_summary = run_tracklet_ocr(
+        manifest_path,
+        evidence_dir / "ocr.json",
+        jersey_ocr=jersey_ocr,
+    )
     embed_faces(manifest_path, evidence_dir / "face.json")
     embed_reid(manifest_path, evidence_dir / "reid.json")
 

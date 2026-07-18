@@ -1,0 +1,173 @@
+<mxfile host="app.diagrams.net" modified="2026-07-16T00:00:00.000Z" agent="ScoutIQ" version="24.0.0" type="device">
+  <diagram id="scoutiq-dataflow" name="ScoutIQ Data Flow">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1320" pageHeight="1120" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Phase bands (drawn first so they sit behind nodes) -->
+        <mxCell id="band1" value="1 · Ingest and validate" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#D5DAE1;fontColor=#005CFF;fontSize=13;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="1240" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="band2" value="2 · Detect, track, stitch" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#D5DAE1;fontColor=#005CFF;fontSize=13;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8" vertex="1" parent="1">
+          <mxGeometry x="40" y="180" width="1240" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="band3" value="3 · Canonical artifacts  (outputs/jobs/&lt;job_id&gt;/)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#D5DAE1;fontColor=#005CFF;fontSize=13;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8" vertex="1" parent="1">
+          <mxGeometry x="40" y="320" width="1240" height="215" as="geometry" />
+        </mxCell>
+        <mxCell id="band4" value="4 · Selection / Confirm and analytics  (reuse canonical, no re-detect)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#D5DAE1;fontColor=#005CFF;fontSize=13;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8" vertex="1" parent="1">
+          <mxGeometry x="40" y="555" width="1240" height="215" as="geometry" />
+        </mxCell>
+        <mxCell id="band5" value="5 · Jersey identity (optional)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCF3F4;strokeColor=#F1C4C8;fontColor=#EF3340;fontSize=13;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8" vertex="1" parent="1">
+          <mxGeometry x="40" y="790" width="1240" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="band6" value="6 · React UI / FastAPI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#D5DAE1;fontColor=#005CFF;fontSize=13;fontStyle=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8" vertex="1" parent="1">
+          <mxGeometry x="40" y="960" width="1240" height="95" as="geometry" />
+        </mxCell>
+
+        <!-- Band 1: Ingest -->
+        <mxCell id="config" value="configs/player_tracking_mvp.yaml&#10;(weights, conf, device, identity, quality)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF1F5;strokeColor=#99A0AD;dashed=1;fontColor=#4B5563;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="70" y="73" width="200" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="mp4" value="WNBA MP4&#10;(upload)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F0FF;strokeColor=#005CFF;strokeWidth=1.5;fontColor=#111827;fontSize=12;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="310" y="72" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="analyze" value="POST /api/analyze&#10;(FastAPI job)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F0FF;strokeColor=#005CFF;strokeWidth=1.5;fontColor=#111827;fontSize=12;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="510" y="72" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="validate" value="OpenCV validate_video&#10;(fps, width, height, frames)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F0FF;strokeColor=#005CFF;strokeWidth=1.5;fontColor=#111827;fontSize=12;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="760" y="72" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="exclusions" value="data/exclusions/*.json&#10;(court ROI, scorebug, crowd)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF1F5;strokeColor=#99A0AD;dashed=1;fontColor=#4B5563;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1030" y="73" width="220" height="46" as="geometry" />
+        </mxCell>
+
+        <!-- Band 2: Detect / Track / Stitch -->
+        <mxCell id="detect" value="best_player_seg.pt&#10;(custom YOLO11-seg detection + masks)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F0FF;strokeColor=#005CFF;strokeWidth=1.5;fontColor=#111827;fontSize=12;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="310" y="213" width="270" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="track" value="ByteTrack&#10;(ObjectTracker, raw track_id)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F0FF;strokeColor=#005CFF;strokeWidth=1.5;fontColor=#111827;fontSize=12;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="620" y="213" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="stitch" value="tracklet_stitcher&#10;raw track_id → stable person_group_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F0FF;strokeColor=#005CFF;strokeWidth=1.5;fontColor=#111827;fontSize=12;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="880" y="213" width="290" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Band 3: Canonical artifacts -->
+        <mxCell id="tracks_jsonl" value="tracks.jsonl.gz&#10;bbox_xyxy · mask_polygon · person_group_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="70" y="362" width="270" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="tracks_csv" value="tracks.csv&#10;(per-frame rows)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="370" y="362" width="200" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="all_mp4" value="all_players.mp4&#10;(full-scene overlay)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="600" y="362" width="200" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="snapshot" value="snapshot.jpg + snapshot.json&#10;(selectable Person # groups)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="830" y="362" width="240" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="person_groups" value="person_groups.json&#10;team_id · jersey_color · role" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="70" y="447" width="270" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="quality" value="quality.json&#10;(coverage, gaps, cuts)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="370" y="447" width="200" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="summary" value="summary.json&#10;(paths, counts, game_context)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="600" y="447" width="200" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="identity_att" value="identity_attachments.json&#10;(pending)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="830" y="447" width="240" height="52" as="geometry" />
+        </mxCell>
+
+        <!-- Band 4: Confirm + analytics -->
+        <mxCell id="confirm" value="POST /api/tracking/selection&#10;(reuse tracks.jsonl.gz — no re-detect)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F0FF;strokeColor=#005CFF;strokeWidth=1.5;fontColor=#111827;fontSize=12;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="70" y="590" width="290" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="focused" value="focused_players.mp4&#10;(selected groups)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="70" y="695" width="200" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="selected_csv" value="selected_tracks.csv&#10;stance_x/y · position_source" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="300" y="695" width="220" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="coach" value="coach_insights.json&#10;(movement + pair proxies)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="550" y="695" width="210" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="pair" value="pair_distances.csv&#10;(per-frame gap_norm)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="790" y="695" width="200" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="iso" value="focused_isolated.mp4&#10;+ isolate_status.json (async)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1020" y="695" width="220" height="52" as="geometry" />
+        </mxCell>
+
+        <!-- Band 5: Identity (optional) -->
+        <mxCell id="resolve" value="POST /api/identity/&lt;job&gt;/resolve&#10;(optional)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF1F2;strokeColor=#EF3340;strokeWidth=1.2;fontColor=#111827;fontSize=11;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="70" y="835" width="250" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="crops" value="identity/crops&#10;(best-frame candidates)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#EF3340;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="350" y="835" width="190" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="ocr" value="run_tracklet_ocr&#10;(PaddleOCR, consistency gates)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#EF3340;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="570" y="835" width="220" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="roster" value="resolve_game&#10;(roster + team hint)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#EF3340;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="820" y="835" width="190" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="idresolved" value="identity_attachments.json&#10;(resolved / manual)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#EF3340;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1040" y="835" width="200" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- Band 6: UI -->
+        <mxCell id="ui" value="React UI (Dashboard · TrackingResults · CoachInsights · PlayerSnapshotSelector)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#111827;strokeColor=#111827;fontColor=#FFFFFF;fontSize=12;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="360" y="985" width="600" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- Edges: ingest -->
+        <mxCell id="e_cfg" value="controls" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;dashed=1;fontSize=10;fontColor=#6B7280" edge="1" parent="1" source="config" target="analyze"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_mp4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=10;fontColor=#4B5563" edge="1" parent="1" source="mp4" target="analyze"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_an" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=10;fontColor=#4B5563" edge="1" parent="1" source="analyze" target="validate"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_val" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=10;fontColor=#4B5563" edge="1" parent="1" source="validate" target="detect"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_ex" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;dashed=1;fontSize=10;fontColor=#6B7280" edge="1" parent="1" source="exclusions" target="detect"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- Edges: detect/track/stitch -->
+        <mxCell id="e_det" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=10;fontColor=#4B5563" edge="1" parent="1" source="detect" target="track"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_trk" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=10;fontColor=#4B5563" edge="1" parent="1" source="track" target="stitch"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- Edges: canonical writes -->
+        <mxCell id="e_c1" value="canonical write" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="stitch" target="tracks_jsonl"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;fontSize=9;fontColor=#6B7280" edge="1" parent="1" source="stitch" target="tracks_csv"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;fontSize=9;fontColor=#6B7280" edge="1" parent="1" source="stitch" target="all_mp4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;fontSize=9;fontColor=#6B7280" edge="1" parent="1" source="stitch" target="snapshot"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;fontSize=9;fontColor=#6B7280" edge="1" parent="1" source="stitch" target="person_groups"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;fontSize=9;fontColor=#6B7280" edge="1" parent="1" source="stitch" target="quality"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;fontSize=9;fontColor=#6B7280" edge="1" parent="1" source="stitch" target="summary"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_c8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;fontSize=9;fontColor=#6B7280" edge="1" parent="1" source="stitch" target="identity_att"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- Edges: confirm -->
+        <mxCell id="e_s1" value="user selects" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="snapshot" target="confirm"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="person_groups" target="confirm"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_s3" value="reuse" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="tracks_jsonl" target="confirm"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_f1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="confirm" target="focused"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_f2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="confirm" target="selected_csv"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_f3" value="async" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="confirm" target="iso"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_f4" value="coach_insights.py (stance)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="selected_csv" target="coach"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_f5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="selected_csv" target="pair"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- Edges: identity -->
+        <mxCell id="e_i0" value="optional" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF3340;dashed=1;fontSize=9;fontColor=#EF3340" edge="1" parent="1" source="identity_att" target="resolve"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_i1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF3340;dashed=1;fontSize=9;fontColor=#EF3340" edge="1" parent="1" source="tracks_jsonl" target="resolve"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_i2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF3340;fontSize=9;fontColor=#EF3340" edge="1" parent="1" source="resolve" target="crops"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_i3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF3340;fontSize=9;fontColor=#EF3340" edge="1" parent="1" source="crops" target="ocr"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_i4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF3340;fontSize=9;fontColor=#EF3340" edge="1" parent="1" source="ocr" target="roster"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_i5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF3340;fontSize=9;fontColor=#EF3340" edge="1" parent="1" source="roster" target="idresolved"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- Edges: to UI -->
+        <mxCell id="e_u1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#111827;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="focused" target="ui"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_u2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#111827;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="coach" target="ui"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_u3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#111827;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="pair" target="ui"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_u4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#111827;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="iso" target="ui"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_u5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#111827;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="idresolved" target="ui"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

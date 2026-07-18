@@ -48,8 +48,11 @@ Flow when a user uploads a clip:
    tracklets for those groups and renders `focused_players.mp4` from frame 0 →
    EOF; it does **not** run YOLO or ByteTrack again (`canonical_reuse=true`).
 6. `identity_attachments.json` provides safe `pending/unresolved/resolved`
-   fields keyed by person group. Future roster/OCR/ReID stages attach evidence;
-   tracking never invents player names.
+   fields keyed by person group. **Resolve jersey identities** searches each
+   person's full track for high-quality jersey OCR opportunities, OCR's only
+   the top temporally diverse candidates (`identity.jersey_ocr` in config),
+   then votes with consistency gates + roster match; Manual jersey remains the
+   fallback. Tracking never invents player names.
 
 Smoke test without the UI (from `scoutiq/`):
 
@@ -95,19 +98,26 @@ background generation. Coach insights / CSV are unchanged.
 
 Confirm requires **at least two** person groups. After focused render,
 `src/pipeline/coach_insights.py` computes clip proxies from
-`selected_tracks.csv` centers (no ball / OCR / court feet):
+`selected_tracks.csv` using **mask-bottom stance** when segmentation exists
+(else bbox bottom / midpoint fallback). Distances stay frame-diagonal (no
+court feet):
 
 | Layer | Metrics |
 |-------|---------|
 | Single-player | coverage trust, path length, mean/p90 speed, high-effort fraction |
 | Pair | both-visible %, separation bands, closeout bursts, chase role (opp), sticky matchup (opp), screen-shape soft label (same team), cut-timing overlap |
+| Scorecard | **Stay Close** (defense) vs **Create Space** (offense) /100 from time attached, closeouts, get-away bursts — or same-team pick/cut/spacing |
+| Time series | `pair_distance_series` in JSON + `pair_distances.csv` (`gap_norm`, `gap_band`, `closing_speed_norm`) |
 
-Artifacts: `outputs/jobs/<job_id>/coach_insights.json` (also on the tracking
-API payload as `coach_insights` + `coach_narrative`). The dashboard shows
-glance cards + a plain-language narrative under TrackingResults.
+Artifacts: `outputs/jobs/<job_id>/coach_insights.json`,
+`pair_distances.csv` (also on the tracking API as `coach_insights` +
+`coach_narrative`; file kind `pair_distances`). The dashboard **Matchup
+Outcomes** panel shows Stay Close / Create Space scores (not camera
+coverage), metric tiles, breakdown bars, and a separation sparkline.
 
 **Non-goals this stage:** ball tracking, shot make/miss, named identity,
-calibrated feet/s, help/rotation without a ball model. Speeds/distances are
+calibrated feet/s, true defensive rating, help/rotation without a ball model.
+Create Space means “got away,” not points scored. Speeds/distances are
 normalized to the frame diagonal.
 
 ### Full-clip quality gate

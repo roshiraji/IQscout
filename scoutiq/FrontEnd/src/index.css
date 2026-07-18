@@ -433,10 +433,219 @@ button:disabled {
   border-color: #3a4a6b;
 }
 
+.scorecard-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scorecard-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.scorecard-subhead {
+  margin-top: 4px;
+  max-width: 42rem;
+}
+
+.scorecard-hero {
+  min-width: 132px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #3a4a6b;
+  background: #121722;
+  text-align: center;
+}
+
+.scorecard-hero-pair {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.scorecard-hero-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #9aa3b5;
+}
+
+.scorecard-hero-strong {
+  border-color: #2f6b4f;
+  background: linear-gradient(180deg, #143026 0%, #121722 100%);
+}
+
+.scorecard-hero-mid {
+  border-color: #6b5a2f;
+  background: linear-gradient(180deg, #2a2414 0%, #121722 100%);
+}
+
+.scorecard-hero-low {
+  border-color: #6b3a3a;
+  background: linear-gradient(180deg, #2a1616 0%, #121722 100%);
+}
+
+.scorecard-hero-label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #aeb6c8;
+}
+
+.scorecard-hero-value {
+  display: block;
+  margin-top: 2px;
+  font-size: 34px;
+  line-height: 1;
+  color: #f5f7fb;
+}
+
+.scorecard-hero-unit {
+  font-size: 12px;
+  color: #9aa3b5;
+}
+
 .coach-pair-label {
-  margin: 8px 0 4px;
+  margin: 2px 0 0;
   font-weight: 700;
   color: #f4f4f4;
+}
+
+.scorecard-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.scorecard-tile {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #2a3348;
+  background: #141820;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scorecard-tile strong {
+  font-size: 12px;
+  color: #aeb6c8;
+  font-weight: 600;
+}
+
+.scorecard-tile-value {
+  font-size: 18px;
+  color: #f4f4f4;
+  font-weight: 700;
+}
+
+.scorecard-tile-hint {
+  font-size: 11px;
+  color: #7f889a;
+  font-style: normal;
+}
+
+.scorecard-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.scorecard-components h3,
+.scorecard-sparkline-head strong {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #f0f0f0;
+}
+
+.scorecard-bar-row {
+  margin-bottom: 8px;
+}
+
+.scorecard-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #cfd5e2;
+  margin-bottom: 4px;
+}
+
+.scorecard-bar-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #1c2330;
+  overflow: hidden;
+}
+
+.scorecard-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #3d6dff, #57c3ff);
+}
+
+.scorecard-sparkline {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #2a3348;
+  background: #141820;
+  color: #57c3ff;
+}
+
+.scorecard-sparkline-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #cfd5e2;
+  font-size: 12px;
+}
+
+.scorecard-sparkline-head span {
+  color: #7f889a;
+}
+
+.scorecard-sparkline-svg {
+  width: 100%;
+  height: 48px;
+  margin-top: 6px;
+}
+
+.scorecard-players {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scorecard-player-chip {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #2a3348;
+  background: #10151e;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 160px;
+}
+
+.scorecard-player-chip strong {
+  font-size: 13px;
+  color: #f0f0f0;
+}
+
+.scorecard-player-chip span {
+  font-size: 12px;
+  color: #9aa3b5;
+}
+
+.scorecard-disclaimer {
+  margin: 0;
+  font-size: 12px;
+  color: #8b93a5;
 }
 
 .coach-glance-grid {
@@ -444,7 +653,7 @@ button:disabled {
 }
 
 .coach-narrative {
-  margin-top: 14px;
+  margin-top: 4px;
   line-height: 1.45;
   color: #e2e2e2;
   background: #141820;
@@ -454,7 +663,7 @@ button:disabled {
 }
 
 .coach-details {
-  margin-top: 12px;
+  margin-top: 4px;
   color: #cfcfcf;
 }
 
@@ -482,6 +691,16 @@ button:disabled {
   margin: 4px 0;
   font-size: 13px;
   color: #cfcfcf;
+}
+
+@media (max-width: 800px) {
+  .scorecard-header {
+    flex-direction: column;
+  }
+
+  .scorecard-body {
+    grid-template-columns: 1fr;
+  }
 }
 
 .video-panel video {

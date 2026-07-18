@@ -1,0 +1,24 @@
+# Train yolo11-seg v2 on all three unique game highlight videos.
+# Output goes to outputs/training_loop_v2/ — does NOT overwrite the current
+# production best_player_seg.pt.
+# Run from scoutiq/:  ..\.venv\Scripts\python.exe -m src.showcase train --config configs/showcase_train_v2.yaml
+
+dataset:
+  data_yaml: data/datasets/nba_player_seg_v2/data.yaml
+
+output:
+  runs_root: outputs/training_loop_v2
+
+training:
+  model: yolo11n-seg.pt
+  epochs: 80
+  max_rounds: 2
+  imgsz: 960
+  # Single RTX 3070 (8 GB): batch 8 at 960px fits with AMP.
+  batch: 8
+  workers: 2
+  device: 0
+
+targets:
+  min_box_map50: 0.50
+  min_mask_map50: 0.40

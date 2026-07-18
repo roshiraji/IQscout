@@ -325,7 +325,7 @@ def resolve_job_identity_endpoint(job_id: str) -> dict:
             detail=f"Identity resolution failed: {exc}",
         ) from exc
     return {
-        "message": "Identity resolution complete.",
+        "message": "Identity resolution complete (best-frame jersey OCR).",
         "summary": summary,
         "identity": _identity_response(job_id),
     }
@@ -395,6 +395,7 @@ def get_job_file(job_id: str, kind: str) -> FileResponse:
         "focused_isolated": ("focused_isolated.mp4", "video/mp4"),
         "tracks": ("tracks.csv", "text/csv"),
         "selected_tracks": ("selected_tracks.csv", "text/csv"),
+        "pair_distances": ("pair_distances.csv", "text/csv"),
         "quality": ("quality.json", "application/json"),
         "identity": ("identity_attachments.json", "application/json"),
         "person_groups": ("person_groups.json", "application/json"),
@@ -414,6 +415,7 @@ def get_job_file(job_id: str, kind: str) -> FileResponse:
         "focused",
         "focused_isolated",
         "selected_tracks",
+        "pair_distances",
         "coach_insights",
         "selection_summary",
     }:

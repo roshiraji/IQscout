@@ -4,7 +4,9 @@
 # (stable person_group_id) → select → focused H.264. NO GDINO/SAM2.
 
 # Trained showcase weights (relative to scoutiq/).
-weights: outputs/training_loop/best_player_seg.pt
+# v2 trained on all three Fever games — Sparks 7/8, Mercury 7/9, Aces 7/12.
+# Previous production weights: outputs/training_loop/best_player_seg.pt
+weights: outputs/training_loop_v2/best_player_seg_v2.pt
 
 # Detection thresholds.
 conf: 0.25
@@ -21,8 +23,8 @@ mask_overlay: true
 mask_smooth_alpha: 0.35
 min_track_frames: 3
 
-# Smoke-test cap; null processes the whole clip.
-max_frames: 100
+# Full clip by default; set a number only for local smoke tests.
+max_frames: null
 
 # Online tracker (isolated per job). bytetrack is the default; botsort is
 # reserved for a future optional path. Continuity is primarily improved by
@@ -52,6 +54,22 @@ jersey_teams:
   enabled: true
   top_frame_fraction: 0.92
   max_candidate_frames: 12
+
+# Optional named identity (Resolve jersey identities). Searches each person's
+# full track for cheap OCR opportunities, then OCR's only top-N diverse frames.
+identity:
+  jersey_ocr:
+    max_candidates_per_person: 48
+    min_spacing_frames: 3
+    min_agreeing_reads: 2
+    min_consistency: 0.60
+    min_read_confidence: 0.50
+    min_bbox_height: 100
+    min_bbox_width: 45
+    min_crop_height: 70
+    min_crop_width: 35
+    min_sharpness: 25
+    min_contrast: 18
 
 # Full-clip quality gates (detector vs tracker continuity).
 quality:

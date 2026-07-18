@@ -471,7 +471,9 @@ function PlayerSnapshotSelector({
             onClick={handleResolveIdentity}
             disabled={isResolvingIdentity}
           >
-            {isResolvingIdentity ? "Resolving identities…" : "Resolve jersey identities"}
+            {isResolvingIdentity
+              ? "Searching best jersey frames…"
+              : "Resolve jersey identities"}
           </button>
         )}
         <button

@@ -37,7 +37,11 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.object_tracker import update_tracker  # noqa: E402
-from src.pipeline.coach_insights import compute_coach_insights  # noqa: E402
+from src.pipeline.coach_insights import (  # noqa: E402
+    compute_coach_insights,
+    write_pair_distances_csv,
+)
+from src.pipeline.geometry_points import stance_point_from_mask  # noqa: E402
 from src.pipeline.player_track_pipeline import (  # noqa: E402
     _apply_device,
     _resolve,
@@ -164,6 +168,9 @@ def _write_tracking_csv(path: Path, rows: list[dict]) -> None:
         "y2",
         "center_x",
         "center_y",
+        "stance_x",
+        "stance_y",
+        "position_source",
         "box_width",
         "box_height",
         "has_mask",
@@ -497,6 +504,10 @@ def render_selected_tracks(
                         int(v) for v in det.get("bbox_xyxy", [0, 0, 0, 0])[:4]
                     ]
                     meta = team_meta_by_group.get(gid) or {}
+                    stance_x, stance_y, position_source = stance_point_from_mask(
+                        det.get("mask_polygon"),
+                        [x1, y1, x2, y2],
+                    )
                     rows.append(
                         {
                             "frame_number": frame_number,
@@ -516,6 +527,9 @@ def render_selected_tracks(
                             "y2": y2,
                             "center_x": round((x1 + x2) / 2, 2),
                             "center_y": round((y1 + y2) / 2, 2),
+                            "stance_x": round(stance_x, 2),
+                            "stance_y": round(stance_y, 2),
+                            "position_source": position_source,
                             "box_width": x2 - x1,
                             "box_height": y2 - y1,
                             "has_mask": bool(det.get("mask_polygon")),
@@ -562,6 +576,11 @@ def render_selected_tracks(
     coach_insights_path.write_text(
         json.dumps(coach_insights, indent=2), encoding="utf-8"
     )
+    pair_distances_path = artifact_dir / "pair_distances.csv"
+    write_pair_distances_csv(
+        pair_distances_path,
+        coach_insights.get("pair_distance_series") or [],
+    )
     coach_narrative = coach_insights.get("coach_narrative") or ""
 
     summary = {
@@ -587,6 +606,7 @@ def render_selected_tracks(
         "unique_person_groups": quality_canon.get("unique_person_groups"),
         "unmatched_labels": [],
         "tracks_csv": str(output_csv.resolve()),
+        "pair_distances_csv": str(pair_distances_path.resolve()),
         "tracking_video": str(output_video.resolve()),
         "isolated_tracking_video": None,
         "isolation_available": False,
@@ -750,6 +770,10 @@ def run_player_tracking(
                 confidence = round(float(det.get("confidence") or 0.0), 4)
                 center_x = round((x1 + x2) / 2, 2)
                 center_y = round((y1 + y2) / 2, 2)
+                stance_x, stance_y, position_source = stance_point_from_mask(
+                    det.get("mask_polygon"),
+                    [x1, y1, x2, y2],
+                )
 
                 track_rows.append(
                     {
@@ -764,6 +788,9 @@ def run_player_tracking(
                         "y2": y2,
                         "center_x": center_x,
                         "center_y": center_y,
+                        "stance_x": round(stance_x, 2),
+                        "stance_y": round(stance_y, 2),
+                        "position_source": position_source,
                         "box_width": x2 - x1,
                         "box_height": y2 - y1,
                         "has_mask": bool(det.get("mask_polygon")),

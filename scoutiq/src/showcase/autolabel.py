@@ -232,6 +232,74 @@ def autolabel_manifest(
     return stats
 
 
+def _label_qa_check(
+    label_path: Path,
+    *,
+    min_points: int = 3,
+    min_norm_area: float = 0.00005,
+    coord_tolerance: float = 0.02,
+) -> tuple[list[str], list[str]]:
+    """Validate YOLO-seg label lines. Returns (valid_lines, rejection_reasons)."""
+    valid: list[str] = []
+    reasons: list[str] = []
+    try:
+        text = label_path.read_text(encoding="utf-8")
+    except OSError:
+        return [], ["unreadable_file"]
+    for ln, line in enumerate(text.splitlines()):
+        parts = line.split()
+        if not parts:
+            continue
+        coords = parts[1:]
+        if len(coords) < min_points * 2 or len(coords) % 2 != 0:
+            reasons.append(f"line{ln}:too_few_points")
+            continue
+        try:
+            vals = [float(v) for v in coords]
+        except ValueError:
+            reasons.append(f"line{ln}:non_numeric")
+            continue
+        xs = vals[0::2]
+        ys = vals[1::2]
+        if (min(xs) < -coord_tolerance or max(xs) > 1 + coord_tolerance
+                or min(ys) < -coord_tolerance or max(ys) > 1 + coord_tolerance):
+            reasons.append(f"line{ln}:out_of_bounds")
+            continue
+        # Shoelace polygon area in normalized units.
+        area = 0.0
+        n = len(xs)
+        for i in range(n):
+            j = (i + 1) % n
+            area += xs[i] * ys[j] - xs[j] * ys[i]
+        area = abs(area) / 2.0
+        if area < min_norm_area:
+            reasons.append(f"line{ln}:tiny_area")
+            continue
+        if area > 0.60:
+            reasons.append(f"line{ln}:implausibly_large")
+            continue
+        valid.append(line)
+    return valid, reasons
+
+
+def _load_scene_cuts(frames_root: Path, clip_id: str) -> list[int]:
+    """Find scene cut indices recorded by ingest for a clip."""
+    for meta_path in frames_root.glob(f"*/{clip_id}/ingest_meta.json"):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            return sorted(int(c) for c in meta.get("scene_cuts") or [])
+        except (OSError, ValueError):
+            continue
+    return []
+
+
+def _segment_of(frame_id: int, cuts: list[int]) -> int:
+    """Scene segment index for a frame (segments bounded by scene cuts)."""
+    import bisect
+
+    return bisect.bisect_right(cuts, frame_id)
+
+
 def build_yolo_seg_dataset(
     *,
     autolabel_root: Path,
@@ -239,10 +307,16 @@ def build_yolo_seg_dataset(
     holdout_clip_ids: set[str] | None = None,
     val_ratio: float = 0.15,
     seed: int = 42,
+    scene_split_frames_root: Path | None = None,
 ) -> Path:
-    """Assemble YOLO-seg train/val from autolabel images+labels (clip-aware).
+    """Assemble YOLO-seg train/val from autolabel images+labels.
 
-    Never includes holdout clip IDs.
+    Never includes holdout clip IDs. When ``scene_split_frames_root`` is given,
+    train/val are split by scene segment (frames between camera cuts stay in
+    the same split) so every clip contributes to both splits without
+    adjacent-frame leakage. Otherwise falls back to clip-level split.
+    Labels failing QA (invalid/tiny/out-of-bounds polygons) are cleaned or
+    dropped, with a QA report written next to the dataset.
     """
     import random
 
@@ -270,45 +344,83 @@ def build_yolo_seg_dataset(
 
     clip_ids = sorted(by_clip.keys())
     rng = random.Random(seed)
-    rng.shuffle(clip_ids)
 
-    if len(clip_ids) >= 2:
-        n_val = max(1, int(round(len(clip_ids) * val_ratio)))
-        # Keep at least one train clip when possible.
-        if n_val >= len(clip_ids):
-            n_val = len(clip_ids) - 1
-        val_clips = set(clip_ids[:n_val])
+    # Label QA pass: keep stems whose labels have >=1 valid polygon.
+    qa_report: dict[str, list[str]] = {}
+    clean_lines: dict[str, list[str]] = {}
+    for cid in clip_ids:
+        kept: list[str] = []
+        for stem in by_clip[cid]:
+            valid, reasons = _label_qa_check(labels_src / f"{stem}.txt")
+            if reasons:
+                qa_report[stem] = reasons
+            if valid:
+                clean_lines[stem] = valid
+                kept.append(stem)
+        by_clip[cid] = kept
+    clip_ids = [c for c in clip_ids if by_clip[c]]
+
+    # Decide split assignment per stem.
+    assignment: dict[str, str] = {}
+    split_mode = "clip"
+    if scene_split_frames_root is not None and clip_ids:
+        split_mode = "scene_segment"
+        for cid in clip_ids:
+            cuts = _load_scene_cuts(scene_split_frames_root, cid)
+            groups: dict[int, list[str]] = {}
+            for stem in by_clip[cid]:
+                frame_id = int(stem.rsplit("_", 1)[1])
+                groups.setdefault(_segment_of(frame_id, cuts), []).append(stem)
+            seg_ids = sorted(groups)
+            rng.shuffle(seg_ids)
+            total = len(by_clip[cid])
+            target_val = int(round(total * val_ratio))
+            val_count = 0
+            for seg in seg_ids:
+                split = "val" if val_count < target_val else "train"
+                if split == "val":
+                    val_count += len(groups[seg])
+                for stem in groups[seg]:
+                    assignment[stem] = split
+            # Guarantee both splits are non-empty per clip when possible.
+            splits_used = {assignment[s] for s in by_clip[cid]}
+            if len(splits_used) == 1 and len(seg_ids) >= 2:
+                flip_to = "val" if "train" in splits_used else "train"
+                for stem in groups[seg_ids[0]]:
+                    assignment[stem] = flip_to
+    elif len(clip_ids) >= 2:
+        shuffled = clip_ids[:]
+        rng.shuffle(shuffled)
+        n_val = max(1, int(round(len(shuffled) * val_ratio)))
+        if n_val >= len(shuffled):
+            n_val = len(shuffled) - 1
+        val_clips = set(shuffled[:n_val])
+        for cid in clip_ids:
+            for stem in by_clip[cid]:
+                assignment[stem] = "val" if cid in val_clips else "train"
     else:
-        val_clips = set()
+        stems = by_clip[clip_ids[0]] if clip_ids else []
+        shuffled = stems[:]
+        rng.shuffle(shuffled)
+        n_val = max(1, int(len(shuffled) * val_ratio)) if len(shuffled) > 5 else max(1, len(shuffled) // 5)
+        n_val = min(n_val, max(len(shuffled) - 1, 0))
+        val_set = set(shuffled[:n_val])
+        for stem in stems:
+            assignment[stem] = "val" if stem in val_set else "train"
 
     for split in ("train", "val"):
         (dataset_root / split / "images").mkdir(parents=True, exist_ok=True)
         (dataset_root / split / "labels").mkdir(parents=True, exist_ok=True)
 
-    def _copy_stem(stem: str, split: str) -> None:
-        shutil.copy2(images_src / f"{stem}.jpg", dataset_root / split / "images" / f"{stem}.jpg")
-        shutil.copy2(labels_src / f"{stem}.txt", dataset_root / split / "labels" / f"{stem}.txt")
-
     train_n = val_n = 0
-    if len(clip_ids) >= 2:
-        for cid, stems in by_clip.items():
-            split = "val" if cid in val_clips else "train"
-            for stem in stems:
-                _copy_stem(stem, split)
-                if split == "train":
-                    train_n += 1
-                else:
-                    val_n += 1
-    else:
-        # Frame-level split inside the only clip (still better than nothing).
-        stems = by_clip[clip_ids[0]] if clip_ids else []
-        rng.shuffle(stems)
-        n_val = max(1, int(len(stems) * val_ratio)) if len(stems) > 5 else max(1, len(stems) // 5)
-        n_val = min(n_val, max(len(stems) - 1, 0))
-        val_set = set(stems[:n_val])
-        for stem in stems:
-            split = "val" if stem in val_set else "train"
-            _copy_stem(stem, split)
+    for cid in clip_ids:
+        for stem in by_clip[cid]:
+            split = assignment[stem]
+            shutil.copy2(images_src / f"{stem}.jpg", dataset_root / split / "images" / f"{stem}.jpg")
+            # Write QA-cleaned labels rather than copying raw files.
+            (dataset_root / split / "labels" / f"{stem}.txt").write_text(
+                "\n".join(clean_lines[stem]) + "\n", encoding="utf-8",
+            )
             if split == "train":
                 train_n += 1
             else:
@@ -325,9 +437,12 @@ def build_yolo_seg_dataset(
         "train_images": train_n,
         "val_images": val_n,
         "clips": clip_ids,
+        "split_mode": split_mode,
         "holdout_excluded": sorted(holdout_clip_ids),
+        "labels_with_qa_rejections": len(qa_report),
         "data_yaml": str(data_yaml),
     }
     (dataset_root / "dataset_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (dataset_root / "label_qa_report.json").write_text(json.dumps(qa_report, indent=2), encoding="utf-8")
     logger.info("YOLO-seg dataset ready: %s (%s)", data_yaml, meta)
     return data_yaml

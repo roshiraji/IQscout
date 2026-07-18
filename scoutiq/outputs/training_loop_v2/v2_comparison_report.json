@@ -1,0 +1,21 @@
+{
+  "elapsed_minutes": 264.5,
+  "v2": {
+    "box_map50": 0.9804934481711026,
+    "box_map": 0.891020886883453,
+    "box_precision": 0.9497155135890242,
+    "box_recall": 0.938286754429002,
+    "mask_map50": 0.9720751100959514,
+    "mask_map": 0.7974487251944985
+  },
+  "production_v1": {
+    "box_map50": 0.9545024171860759,
+    "box_map": 0.8199103733482815,
+    "box_precision": 0.9333277264462414,
+    "box_recall": 0.8914948123479977,
+    "mask_map50": 0.9430744258048596,
+    "mask_map": 0.736231178075045
+  },
+  "v2_weights": "Z:\\scoutIQ VisionPlay\\scoutiq\\outputs\\training_loop_v2\\best_player_seg_v2.pt",
+  "production_weights": "Z:\\scoutIQ VisionPlay\\scoutiq\\outputs\\training_loop\\best_player_seg.pt"
+}

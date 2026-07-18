@@ -1,0 +1,18 @@
+{
+  "history": [
+    {
+      "round": 1,
+      "weights": "Z:\\scoutIQ VisionPlay\\scoutiq\\outputs\\training_loop_v2\\best_player_seg.pt",
+      "metrics": {
+        "box_map50": 0.9804934481711026,
+        "box_map": 0.891020886883453,
+        "box_precision": 0.9497155135890242,
+        "box_recall": 0.938286754429002,
+        "mask_map50": 0.9720751100959514,
+        "mask_map": 0.7974487251944985
+      },
+      "passed": true
+    }
+  ],
+  "best_weights": "Z:\\scoutIQ VisionPlay\\scoutiq\\outputs\\training_loop_v2\\best_player_seg.pt"
+}

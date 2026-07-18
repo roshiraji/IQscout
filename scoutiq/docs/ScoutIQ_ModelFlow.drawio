@@ -1,0 +1,114 @@
+<mxfile host="app.diagrams.net" modified="2026-07-16T00:00:00.000Z" agent="ScoutIQ" version="24.0.0" type="device">
+  <diagram id="scoutiq-modelflow" name="ScoutIQ Model Flow">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1320" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Family bands (behind) -->
+        <mxCell id="fa" value="A · Detection and attributes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#D5DAE1;fontColor=#005CFF;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6" vertex="1" parent="1">
+          <mxGeometry x="40" y="120" width="360" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="fb" value="B · Association (track over time)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#D5DAE1;fontColor=#005CFF;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6" vertex="1" parent="1">
+          <mxGeometry x="420" y="120" width="280" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="fc" value="C · Identity (optional)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCF3F4;strokeColor=#F1C4C8;fontColor=#EF3340;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6" vertex="1" parent="1">
+          <mxGeometry x="720" y="120" width="280" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="fd" value="D · Reconstruction (isolate)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#D5DAE1;fontColor=#005CFF;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6" vertex="1" parent="1">
+          <mxGeometry x="1020" y="120" width="260" height="360" as="geometry" />
+        </mxCell>
+
+        <!-- Root -->
+        <mxCell id="root" value="Video frame (BGR)&#10;per-frame input tensor" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#111827;strokeColor=#111827;fontColor=#FFFFFF;fontSize=12;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="540" y="30" width="240" height="54" as="geometry" />
+        </mxCell>
+
+        <!-- A: Detection -->
+        <mxCell id="yolo" value="YOLO11-seg  (learned CNN · Ultralytics)&#10;weights: yolo11n-seg.pt / best_player_seg.pt&#10;person_conf 0.30 · min box 40×15 px" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#005CFF;strokeColor=#003DAA;fontColor=#FFFFFF;fontSize=11;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="55" y="165" width="330" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="yolo_out" value="→ bbox_xyxy · mask_polygon · confidence · class_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="55" y="255" width="330" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="jersey" value="HSV jersey-color classifier&#10;(rule-based)&#10;torso HSV → player_red /&#10;player_black_blue / referee" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF1F5;strokeColor=#99A0AD;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="55" y="320" width="160" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="ball" value="HSV orange-ball detector&#10;(rule-based)&#10;area + circularity gate&#10;conf 0.55" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF1F5;strokeColor=#99A0AD;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="225" y="320" width="160" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- B: Association -->
+        <mxCell id="byte" value="ByteTrack  (supervision)&#10;Kalman motion + IoU match&#10;simple-IoU fallback tracker" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#005CFF;strokeColor=#003DAA;fontColor=#FFFFFF;fontSize=11;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="435" y="165" width="250" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="byte_out" value="→ track_id (per frame)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="435" y="255" width="250" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="stitch" value="tracklet_stitcher  (heuristic)&#10;bridge ID switches by&#10;appearance + geometry&#10;→ stable person_group_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF1F5;strokeColor=#99A0AD;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="435" y="320" width="250" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- C: Identity -->
+        <mxCell id="paddle" value="PaddleOCR  (learned CRNN)&#10;use_angle_cls · lang=en&#10;runs on best-frame crops only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#005CFF;strokeColor=#EF3340;strokeWidth=2;fontColor=#FFFFFF;fontSize=11;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="735" y="165" width="250" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="paddle_out" value="→ digits + read confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#EF3340;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="735" y="255" width="250" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="gates" value="Consistency gates (rule-based)&#10;≥2 agreeing reads · consistency ≥ 0.60&#10;weighted by conf × opportunity" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF1F5;strokeColor=#99A0AD;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="735" y="305" width="250" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="roster" value="resolve_game  (roster lookup)&#10;jersey + team hint → name / number" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF1F5;strokeColor=#EF3340;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="735" y="380" width="250" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- D: Reconstruction -->
+        <mxCell id="iso" value="Isolate renderer  (classical CV)&#10;1) ORB feature align → warpAffine&#10;2) temporal median from clean frames&#10;3) Navier-Stokes inpaint (fallback)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF1F5;strokeColor=#99A0AD;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1035" y="165" width="230" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="iso_out" value="→ focused_isolated.mp4&#10;(clean plate, selected players kept)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="1035" y="300" width="230" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- Legend -->
+        <mxCell id="leg" value="Legend" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D5DAE1;fontColor=#111827;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6" vertex="1" parent="1">
+          <mxGeometry x="40" y="510" width="470" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="leg1" value="Learned model (neural net)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#005CFF;strokeColor=#003DAA;fontColor=#FFFFFF;fontSize=10;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="55" y="545" width="200" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="leg2" value="Heuristic / classical-CV step" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EEF1F5;strokeColor=#99A0AD;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="55" y="585" width="200" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="leg3" value="Model output / artifact" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#005CFF;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="290" y="545" width="200" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="leg4" value="Red border = optional identity path" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#EF3340;strokeWidth=2;fontColor=#111827;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="290" y="585" width="200" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Edges -->
+        <mxCell id="m1" value="frames" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#111827;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="root" target="yolo"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m2" value="frames" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#111827;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="root" target="iso"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="m3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="yolo" target="yolo_out"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m4" value="torso pixels" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;fontSize=9;fontColor=#6B7280" edge="1" parent="1" source="yolo_out" target="jersey"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m5" value="frame pixels" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;fontSize=9;fontColor=#6B7280" edge="1" parent="1" source="yolo" target="ball"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="m6" value="bbox + conf" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="yolo_out" target="byte"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="byte" target="byte_out"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m8" value="track_id series" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="byte_out" target="stitch"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="m9" value="best-frame person crops" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF3340;dashed=1;fontSize=9;fontColor=#EF3340" edge="1" parent="1" source="stitch" target="paddle"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF3340;fontSize=9;fontColor=#EF3340" edge="1" parent="1" source="paddle" target="paddle_out"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF3340;fontSize=9;fontColor=#EF3340" edge="1" parent="1" source="paddle_out" target="gates"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m12" value="resolved jersey" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#EF3340;fontSize=9;fontColor=#EF3340" edge="1" parent="1" source="gates" target="roster"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="m13" value="person masks + selected groups" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#99A0AD;fontSize=9;fontColor=#6B7280" edge="1" parent="1" source="yolo_out" target="iso"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m14" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeColor=#005CFF;fontSize=9;fontColor=#4B5563" edge="1" parent="1" source="iso" target="iso_out"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

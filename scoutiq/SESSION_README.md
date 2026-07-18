@@ -107,18 +107,21 @@ destroy a completed tracking job.
 
 ### 7. Coach Insights MVP
 
-Confirm requires at least two selected people. From the canonical tracking CSV,
-`src/pipeline/coach_insights.py` calculates explainable clip-level proxies:
+Confirm requires at least two selected people. From the selected tracking CSV,
+`src/pipeline/coach_insights.py` calculates explainable clip-level proxies
+using **mask-bottom stance** (segmentation foot proxy) when available, else
+bbox:
 
 - selected-player coverage and trust;
 - normalized path length;
 - mean and p90 movement speed;
 - high-effort movement fraction;
-- pair visibility and separation bands;
+- pair visibility and separation bands (plus bbox gap for comparison);
 - closeout bursts and chase-role indicators;
 - sticky-matchup proxy for opposing teams;
-- screen-shape proxy for same-team pairs; and
-- cut-timing overlap.
+- screen-shape proxy for same-team pairs;
+- cut-timing overlap; and
+- per-frame `pair_distances.csv` / `pair_distance_series` for performance work.
 
 The React `CoachInsights` component presents glance cards and a plain-language
 narrative. This MVP does not claim ball possession, shot outcome, calibrated
@@ -161,6 +164,22 @@ Confirm no longer waits for the expensive temporal isolate render.
 - The final MP4 is atomically replaced and served with no-store headers.
 
 This background job does not rerun the detector or tracker.
+
+### 10. Best-frame jersey OCR (identity Resolve)
+
+**Resolve jersey identities** does not OCR every frame and does not rely on a
+single snapshot. For each non-official person group it:
+
+1. Scores the full track with cheap crop metrics (size, sharpness, contrast,
+   aspect, brightness).
+2. Keeps top-N temporally spaced candidates (`identity.jersey_ocr` in
+   `configs/player_tracking_mvp.yaml`, default 48).
+3. Runs PaddleOCR only on those torso crops.
+4. Aggregates weighted votes with ≥2 agreeing reads and consistency ≥ 0.60.
+5. Matches unique jersey + team hint against the roster.
+
+Manual jersey entry remains the fallback when OCR fails. Identity stays optional
+for Confirm / Coach Insights.
 
 ## Current architecture
 
@@ -306,10 +325,11 @@ isolate implementation.
 
 ## Known limitations
 
-- Identity is a stable anonymous person group, not a guaranteed named athlete.
+- Identity is a stable anonymous person group until Resolve/Manual jersey
+  attaches a roster name; OCR searches best frames, not every frame.
 - Team grouping is jersey-color based.
-- Coach Insights are normalized video-space proxies, not calibrated court
-  coordinates.
+- Coach Insights use mask-bottom stance distances when segmentation exists;
+  values remain frame-diagonal proxies, not calibrated court coordinates.
 - Isolate quality depends on mask quality and whether nearby frames expose the
   hidden court.
 - The isolate queue is process-local. Restarting FastAPI interrupts the active

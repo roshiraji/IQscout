@@ -104,6 +104,21 @@ def load_pipeline_config(config_path: str | Path | None = None) -> dict:
             "top_frame_fraction": 0.92,
             "max_candidate_frames": 12,
         },
+        "identity": {
+            "jersey_ocr": {
+                "max_candidates_per_person": 48,
+                "min_spacing_frames": 3,
+                "min_agreeing_reads": 2,
+                "min_consistency": 0.60,
+                "min_read_confidence": 0.50,
+                "min_bbox_height": 100,
+                "min_bbox_width": 45,
+                "min_crop_height": 70,
+                "min_crop_width": 35,
+                "min_sharpness": 25,
+                "min_contrast": 18,
+            },
+        },
     }
     if path.is_file():
         loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -508,6 +523,7 @@ def run_player_seg_tracking(
             group["roster_team_id"] = meta.get("roster_team_id")
             group["team_label"] = meta.get("team_label")
             group["jersey_color_name"] = meta.get("jersey_color_name")
+            group["role"] = meta.get("role") or "player"
             group["overlay_color_hex"] = meta.get("overlay_color_hex")
             group["overlay_color_bgr"] = meta.get("overlay_color_bgr")
         person_groups_path.write_text(

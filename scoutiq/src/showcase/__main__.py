@@ -117,19 +117,22 @@ def cmd_build_dataset(args: argparse.Namespace) -> int:
     cfg = _load_cfg(_resolve(args.config))
     data_root = _resolve(cfg.get("data_root", "data"))
     autolabel_root = _resolve(cfg.get("autolabel", {}).get("output_root", "outputs/auto_labels"))
-    dataset_root = data_root / "datasets" / "nba_player_seg"
+    dataset_name = args.dataset_name or cfg.get("dataset_name") or "nba_player_seg"
+    dataset_root = data_root / "datasets" / dataset_name
 
     holdout: set[str] = set()
     gate = data_root / "frames" / "holdout_gate.json"
     if gate.is_file():
         holdout = set(json.loads(gate.read_text(encoding="utf-8")).get("holdout_clip_ids") or [])
 
+    scene_split = bool(cfg.get("scene_split", False)) or bool(args.scene_split)
     data_yaml = build_yolo_seg_dataset(
         autolabel_root=autolabel_root,
         dataset_root=dataset_root,
         holdout_clip_ids=holdout,
         val_ratio=float(cfg.get("val_ratio", 0.15)),
         seed=int(cfg.get("seed", 42)),
+        scene_split_frames_root=(data_root / "frames") if scene_split else None,
     )
     print(f"Dataset: {data_yaml}")
     return 0
@@ -192,6 +195,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("build-dataset", help="Assemble YOLO-seg train/val (excludes holdout)")
     s.add_argument("--config", default="configs/showcase_ingest.yaml")
+    s.add_argument("--dataset-name", help="Dataset folder name under data/datasets/")
+    s.add_argument("--scene-split", action="store_true",
+                   help="Split train/val by scene segments instead of whole clips")
     s.set_defaults(func=cmd_build_dataset)
 
     s = sub.add_parser("train", help="Train yolo11n-seg -> best_player_seg.pt")
