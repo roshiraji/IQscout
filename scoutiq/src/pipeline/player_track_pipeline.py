@@ -119,6 +119,38 @@ def load_pipeline_config(config_path: str | Path | None = None) -> dict:
                 "min_contrast": 18,
             },
         },
+        "ball": {
+            "enabled": False,
+            "weights": "outputs/training_loop_ball/best_ball_det.pt",
+            "conf": 0.25,
+            "device": "cpu",
+            "every_n_frames": 1,
+            "hsv_fallback": True,
+            "track": {
+                "iou_threshold": 0.15,
+                "max_missed": 12,
+                "interpolate": {"enabled": True, "max_gap": 5, "min_conf": 0.2},
+            },
+            "hoop": {
+                "enabled": False,
+                "weights": "outputs/training_loop_hoop/best_hoop_det.pt",
+                "conf": 0.30,
+                "every_n_frames": 15,
+            },
+            "possession": {
+                "max_dist_norm": 0.12,
+                "min_held_fraction": 0.12,
+                "min_confidence": 0.45,
+                "min_window_frames": 8,
+                "margin": 0.12,
+                "fusion_weights": {
+                    "possession": 0.55,
+                    "direction": 0.25,
+                    "spread": 0.08,
+                    "continuity": 0.12,
+                },
+            },
+        },
     }
     if path.is_file():
         loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -610,6 +642,35 @@ def run_player_seg_tracking(
         encoding="utf-8",
     )
 
+    ball_summary = None
+    possession_summary = None
+    ball_cfg = cfg.get("ball") or {}
+    if bool(ball_cfg.get("enabled", False)):
+        if progress_callback:
+            progress_callback(frames_processed, total_frames, "ball_tracking")
+        try:
+            from src.ball.live import infer_possession_for_job, run_ball_tracking_on_video
+
+            ball_summary = run_ball_tracking_on_video(
+                video,
+                artifact_dir=artifact_dir,
+                ball_cfg=ball_cfg,
+                cut_frames=cut_frames,
+                width=width,
+                height=height,
+                fps=fps,
+                max_frames=int(cap_frames) if cap_frames is not None else None,
+                quiet=quiet,
+            )
+            possession_summary = infer_possession_for_job(
+                artifact_dir,
+                possession_cfg=ball_cfg.get("possession") or {},
+            )
+        except Exception as exc:  # noqa: BLE001 — ball must never fail Analyze
+            logger.warning("Ball / possession pass soft-failed: %s", exc)
+            ball_summary = {"enabled": True, "error": str(exc)}
+            possession_summary = {"offense_team_id": None, "source": "error"}
+
     runtime = round(time.perf_counter() - start, 2)
     summary = {
         "job_id": job_id,
@@ -649,6 +710,14 @@ def run_player_seg_tracking(
         "total_runtime_seconds": runtime,
         "auto_tracked": True,
         "focus_labels": focus_labels or [],
+        "ball": ball_summary,
+        "possession": possession_summary,
+        "offense_team_id": (
+            possession_summary.get("offense_team_id") if possession_summary else None
+        ),
+        "defense_team_id": (
+            possession_summary.get("defense_team_id") if possession_summary else None
+        ),
     }
     summary_json_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     summary["summary_json"] = str(summary_json_path.resolve())

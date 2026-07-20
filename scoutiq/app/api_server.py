@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
+import threading  # noqa: E402 — used by /api/shutdown
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = PROJECT_ROOT / "src"
@@ -45,6 +47,7 @@ from player_snapshot_selector import run_snapshot_selection  # noqa: E402
 from track_players import render_selected_tracks, run_player_tracking  # noqa: E402
 from video_intake_filter import save_intake_report, validate_video  # noqa: E402
 
+from src.pipeline.atomic_json import write_json_atomic  # noqa: E402
 from src.pipeline.player_track_pipeline import run_player_seg_tracking  # noqa: E402
 from src.pipeline.job_manager import get_job_manager  # noqa: E402
 from src.pipeline.resolve_job_identity import resolve_job_identity, resolve_manual_jersey  # noqa: E402
@@ -86,6 +89,13 @@ class ManualJerseyRequest(BaseModel):
     track_id: int
     jersey_number: str
 
+
+class OffenseTeamOverrideRequest(BaseModel):
+    """Manual offense-team override (0/1) or auto (null) — no re-detect."""
+
+    offense_team_id: int | None = None
+    mode: str = "manual"  # "manual" | "auto"
+
 app = FastAPI(title="ScoutIQ API", version="0.1.0")
 
 app.add_middleware(
@@ -125,12 +135,57 @@ def health() -> dict[str, str | list[str]]:
             "person_group_stitching",
             "selected_player_retention",
             "coach_insights",
+            "ball_tracking",
+            "possession_offense_defense",
+            "offense_team_override",
+            "clean_isolate_ai",
             "full_clip_player_tracking",
             "identity_attachments",
             "identity_resolve",
             "intake",
+            "app_shutdown",
         ],
     }
+
+
+@app.post("/api/shutdown")
+def shutdown_app() -> JSONResponse:
+    """Signal the desktop launcher to quit (writes quit.requested flag)."""
+    runtime_dir = PROJECT_ROOT / ".scoutiq_runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    quit_flag = runtime_dir / "quit.requested"
+    quit_flag.write_text("1", encoding="utf-8")
+
+    def _delayed_stop() -> None:
+        # Give the HTTP response time to reach the browser, then free ports.
+        time.sleep(0.8)
+        stop_script = PROJECT_ROOT / "scripts" / "stop_services.ps1"
+        if stop_script.is_file():
+            try:
+                import subprocess
+
+                flags = 0
+                if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                    flags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+                subprocess.Popen(
+                    [
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-WindowStyle",
+                        "Hidden",
+                        "-File",
+                        str(stop_script),
+                    ],
+                    cwd=str(PROJECT_ROOT),
+                    creationflags=flags,
+                )
+            except Exception:
+                pass
+
+    threading.Thread(target=_delayed_stop, daemon=True).start()
+    return JSONResponse({"status": "shutting_down"})
 
 
 @app.post("/api/analyze")
@@ -384,6 +439,194 @@ def get_isolate_status(job_id: str, generation: str | None = None) -> dict:
     return state
 
 
+def _write_confirm_status(job_id: str, payload: dict) -> None:
+    artifact_dir = get_job_manager().artifact_dir(Path(job_id).name)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    path = artifact_dir / "confirm_status.json"
+    data = {
+        **payload,
+        "job_id": Path(job_id).name,
+        "updated_at": time.time(),
+    }
+    write_json_atomic(path, data)
+
+
+@app.get("/api/jobs/{job_id}/confirm-status")
+def get_confirm_status(job_id: str) -> dict:
+    """Live Confirm progress while focused preview is rendering."""
+    path = get_job_manager().artifact_dir(Path(job_id).name) / "confirm_status.json"
+    if not path.is_file():
+        return {
+            "job_id": Path(job_id).name,
+            "status": "idle",
+            "stage": "idle",
+            "progress": 0.0,
+            "detail": "Waiting for Confirm…",
+        }
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/jobs/{job_id}/possession")
+def get_job_possession(job_id: str) -> dict:
+    """Return possession / offense-defense summary for a job."""
+    artifact_dir = get_job_manager().artifact_dir(Path(job_id).name)
+    path = artifact_dir / "possession.json"
+    override_path = artifact_dir / "offense_team_override.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Possession not available yet.")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    override = None
+    if override_path.is_file():
+        try:
+            override = json.loads(override_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            override = None
+    return {"job_id": job_id, "possession": data, "override": override}
+
+
+@app.post("/api/jobs/{job_id}/offense-team")
+def set_offense_team(job_id: str, body: OffenseTeamOverrideRequest) -> dict:
+    """Set offense team (0/1) or Auto — recomputes Matchup roles only."""
+    manager = get_job_manager()
+    state = manager.get(Path(job_id).name)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    if state.get("status") != "ready":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Tracking job is {state.get('status')}; wait until ready.",
+        )
+    mode = (body.mode or "manual").lower()
+    if mode not in {"manual", "auto"}:
+        raise HTTPException(status_code=400, detail="mode must be manual or auto")
+    offense_id = None if mode == "auto" else body.offense_team_id
+    if mode == "manual" and offense_id not in (0, 1):
+        raise HTTPException(
+            status_code=400,
+            detail="offense_team_id must be 0 or 1 for manual override (or mode=auto).",
+        )
+
+    artifact_dir = manager.artifact_dir(Path(job_id).name)
+    try:
+        from src.ball.live import apply_offense_team_override
+        from src.pipeline.coach_insights import compute_coach_insights
+        from src.pipeline.player_track_pipeline import load_pipeline_config
+
+        cfg = load_pipeline_config()
+        possession_cfg = (cfg.get("ball") or {}).get("possession") or {}
+        possession = apply_offense_team_override(
+            artifact_dir,
+            offense_team_id=offense_id,
+            mode=mode,
+            possession_cfg=possession_cfg,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Offense override failed: {exc}"
+        ) from exc
+
+    # Recompute Matchup Outcomes from existing selection without re-detect.
+    coach_insights = None
+    coach_narrative = None
+    selection_summary_path = artifact_dir / "selection_summary.json"
+    selected_csv = artifact_dir / "selected_tracks.csv"
+    if selected_csv.is_file() and selection_summary_path.is_file():
+        try:
+            import csv
+
+            rows = list(csv.DictReader(selected_csv.open(encoding="utf-8")))
+            # Normalize numeric fields used by coach insights.
+            for row in rows:
+                for key in (
+                    "frame_number",
+                    "person_group_id",
+                    "track_id",
+                    "x1",
+                    "y1",
+                    "x2",
+                    "y2",
+                    "center_x",
+                    "center_y",
+                    "stance_x",
+                    "stance_y",
+                    "timestamp_seconds",
+                ):
+                    if row.get(key) not in (None, ""):
+                        try:
+                            row[key] = float(row[key]) if "." in str(row[key]) else int(float(row[key]))
+                        except (TypeError, ValueError):
+                            pass
+            summary = json.loads(selection_summary_path.read_text(encoding="utf-8"))
+            gids = [int(g) for g in (summary.get("selected_person_group_ids") or [])]
+            label_by = {
+                int(v): k for k, v in (summary.get("track_mapping") or {}).items()
+            }
+            # Team meta from person_groups / snapshot.
+            team_meta: dict[int, dict] = {}
+            groups_path = artifact_dir / "person_groups.json"
+            if groups_path.is_file():
+                groups_payload = json.loads(groups_path.read_text(encoding="utf-8"))
+                for g in groups_payload.get("person_groups") or []:
+                    gid = int(g["person_group_id"])
+                    team_meta[gid] = {
+                        "team_id": g.get("team_id"),
+                        "jersey_color_name": g.get("jersey_color_name"),
+                        "role": g.get("role"),
+                        "player_label": label_by.get(gid) or g.get("label"),
+                    }
+            width = int((summary.get("quality") or {}).get("frame_width") or 1920)
+            height = int((summary.get("quality") or {}).get("frame_height") or 1080)
+            # Prefer snapshot dimensions if present.
+            snap = artifact_dir / "snapshot.json"
+            if snap.is_file():
+                snap_data = json.loads(snap.read_text(encoding="utf-8"))
+                width = int(snap_data.get("frame_width") or width)
+                height = int(snap_data.get("frame_height") or height)
+            coach_insights = compute_coach_insights(
+                rows,
+                source_frame_count=int(summary.get("source_frame_count") or 1),
+                frame_width=width,
+                frame_height=height,
+                label_by_group=label_by,
+                team_meta_by_group=team_meta,
+                primary_pair=tuple(sorted(gids)[:2]) if len(gids) >= 2 else None,
+                possession=possession,
+            )
+            coach_narrative = coach_insights.get("coach_narrative")
+            (artifact_dir / "coach_insights.json").write_text(
+                json.dumps(coach_insights, indent=2), encoding="utf-8"
+            )
+            summary["coach_insights"] = coach_insights
+            summary["coach_narrative"] = coach_narrative
+            summary["possession"] = possession
+            summary["offense_team_id"] = possession.get("offense_team_id")
+            summary["defense_team_id"] = possession.get("defense_team_id")
+            selection_summary_path.write_text(
+                json.dumps(summary, indent=2), encoding="utf-8"
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Override still saved; insights refresh is best-effort.
+            coach_insights = {"error": str(exc)}
+
+    return {
+        "job_id": job_id,
+        "message": (
+            "Offense team set to Auto."
+            if mode == "auto"
+            else f"Offense team set to team_id={offense_id}."
+        ),
+        "possession": possession,
+        "coach_insights": coach_insights,
+        "coach_narrative": coach_narrative,
+    }
+
+
 @app.get("/api/jobs/{job_id}/files/{kind}")
 def get_job_file(job_id: str, kind: str) -> FileResponse:
     """Serve canonical/focused artifacts without exposing arbitrary paths."""
@@ -392,6 +635,7 @@ def get_job_file(job_id: str, kind: str) -> FileResponse:
         "snapshot_masks": ("snapshot_masks.jpg", "image/jpeg"),
         "all": ("all_players.mp4", "video/mp4"),
         "focused": ("focused_players.mp4", "video/mp4"),
+        "focused_masks": ("focused_masks.mp4", "video/mp4"),
         "focused_isolated": ("focused_isolated.mp4", "video/mp4"),
         "tracks": ("tracks.csv", "text/csv"),
         "selected_tracks": ("selected_tracks.csv", "text/csv"),
@@ -401,6 +645,8 @@ def get_job_file(job_id: str, kind: str) -> FileResponse:
         "person_groups": ("person_groups.json", "application/json"),
         "selection_summary": ("selection_summary.json", "application/json"),
         "coach_insights": ("coach_insights.json", "application/json"),
+        "possession": ("possession.json", "application/json"),
+        "ball_summary": ("ball_summary.json", "application/json"),
     }
     if kind not in filenames:
         raise HTTPException(status_code=404, detail="Unknown job artifact.")
@@ -413,11 +659,13 @@ def get_job_file(job_id: str, kind: str) -> FileResponse:
     headers = None
     if kind in {
         "focused",
+        "focused_masks",
         "focused_isolated",
         "selected_tracks",
         "pair_distances",
         "coach_insights",
         "selection_summary",
+        "possession",
     }:
         headers = {
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -488,6 +736,27 @@ def save_tracking_selection(body: TrackingSelectionRequest) -> dict:
             ],
         }
         selection_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _write_confirm_status(
+            body.job_id,
+            {
+                "status": "processing",
+                "stage": "saving_selection",
+                "progress": 0.02,
+                "detail": f"Confirming {effective_count} selected player(s)…",
+            },
+        )
+
+        def _confirm_progress(stage: str, progress: float, detail: str | None = None) -> None:
+            _write_confirm_status(
+                body.job_id,
+                {
+                    "status": "processing",
+                    "stage": stage,
+                    "progress": progress,
+                    "detail": detail or stage.replace("_", " "),
+                },
+            )
+
         try:
             # When person groups are provided, do not also pass track_ids —
             # snapshot track_id mirrors person_group_id and must not be remapped
@@ -498,12 +767,27 @@ def save_tracking_selection(body: TrackingSelectionRequest) -> dict:
                 selected_person_group_ids=selected_group_ids or None,
                 selected_players=body.selected_players,
                 quiet=True,
+                progress_cb=_confirm_progress,
+            )
+            _write_confirm_status(
+                body.job_id,
+                {
+                    "status": "processing",
+                    "stage": "queuing_isolate",
+                    "progress": 0.97,
+                    "detail": "Queuing isolate preview in the background…",
+                },
             )
             isolate_generation = uuid.uuid4().hex
+            from src.pipeline.player_track_pipeline import load_pipeline_config
+
+            pipeline_cfg = load_pipeline_config()
+            isolate_cfg = dict(pipeline_cfg.get("isolate") or {})
             isolate_state = manager.submit_isolate(
                 body.job_id,
                 set(tracking["selected_person_group_ids"]),
                 isolate_generation,
+                isolate_cfg=isolate_cfg,
             )
             tracking.update(
                 {
@@ -511,13 +795,46 @@ def save_tracking_selection(body: TrackingSelectionRequest) -> dict:
                     "isolation_available": False,
                     "isolation_status": isolate_state["status"],
                     "isolation_generation": isolate_generation,
+                    "isolation_mode": isolate_state.get("effective_mode"),
+                    "isolation_requested_mode": isolate_state.get("requested_mode"),
+                    "isolation_method": isolate_state.get("method"),
+                    "isolation_ai_fallback": isolate_state.get("ai_fallback"),
                 }
             )
             summary_path = manager.artifact_dir(body.job_id) / "selection_summary.json"
             summary_path.write_text(json.dumps(tracking, indent=2), encoding="utf-8")
+            _write_confirm_status(
+                body.job_id,
+                {
+                    "status": "ready",
+                    "stage": "ready",
+                    "progress": 1.0,
+                    "detail": "Focused preview ready. Isolate continues in the background.",
+                },
+            )
         except ValueError as exc:
+            _write_confirm_status(
+                body.job_id,
+                {
+                    "status": "failed",
+                    "stage": "failed",
+                    "progress": 0.0,
+                    "detail": str(exc),
+                    "error": str(exc),
+                },
+            )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
+            _write_confirm_status(
+                body.job_id,
+                {
+                    "status": "failed",
+                    "stage": "failed",
+                    "progress": 0.0,
+                    "detail": f"Focused preview rendering failed: {exc}",
+                    "error": str(exc),
+                },
+            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Focused preview rendering failed: {exc}",

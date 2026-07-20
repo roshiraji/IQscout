@@ -2,6 +2,12 @@
 
 Beginner-friendly Python project for processing WNBA MP4 video clips with OpenCV, YOLO, and tracking tools. The React dashboard and FastAPI backend drive the main workflow; Streamlit remains available as an optional legacy UI.
 
+## Latest updates (2026-07-19)
+
+See [`README_UPDATES_2026-07-19.md`](README_UPDATES_2026-07-19.md) for today’s branch: one-click desktop launcher, story-driven loading screen, Anne React + FastAPI integration, faster GPU Clean Isolate, Windows-safe job writes, and ingest/confirm progress UX.
+
+**Run the app:** double-click repo-root `run_scoutiq.bat` (close the ScoutIQ window to quit everything).
+
 ## Latest dashboard architecture
 
 See [`SESSION_README.md`](SESSION_README.md) for the July 14, 2026 tracking,

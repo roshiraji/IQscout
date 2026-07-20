@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.pipeline.atomic_json import write_json_atomic
 from src.pipeline.player_track_pipeline import JOBS_DIR, run_player_seg_tracking
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,9 @@ class TrackingJobManager:
         self.jobs_dir = jobs_dir
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self._queue: queue.Queue[tuple[str, Path, dict, int | None]] = queue.Queue()
-        self._isolate_queue: queue.Queue[tuple[str, set[int], str]] = queue.Queue()
+        self._isolate_queue: queue.Queue[
+            tuple[str, set[int], str, dict]
+        ] = queue.Queue()
         self._lock = threading.Lock()
         self._recover_interrupted_jobs()
         self._worker = threading.Thread(
@@ -117,12 +120,23 @@ class TrackingJobManager:
         job_id: str,
         selected_group_ids: set[int],
         generation: str,
+        isolate_cfg: dict | None = None,
     ) -> dict:
-        """Queue a CPU-heavy temporal isolate render without blocking Confirm."""
+        """Queue isolate render (temporal or AI LaMa) without blocking Confirm."""
+        from src.pipeline.isolate_renderer import (
+            isolate_mode_label,
+            resolve_isolate_mode,
+        )
+        from src.pipeline.lama_inpaint import describe_ai_readiness
+
         canonical = self.get(job_id)
         if canonical is None:
             raise KeyError(job_id)
         total = int((canonical.get("result") or {}).get("source_frame_count") or 0)
+        cfg = dict(isolate_cfg or {})
+        requested = str(cfg.get("mode", "temporal")).lower()
+        effective = resolve_isolate_mode(cfg)
+        readiness = describe_ai_readiness()
         state = {
             "job_id": job_id,
             "generation": generation,
@@ -133,13 +147,18 @@ class TrackingJobManager:
             "total_frames": total,
             "eta_seconds": None,
             "error": None,
+            "requested_mode": requested,
+            "effective_mode": effective,
+            "method": isolate_mode_label(effective),
+            "ai_readiness": readiness,
+            "ai_fallback": requested in {"ai", "hybrid"} and effective == "temporal",
             "created_at": _now(),
             "updated_at": _now(),
         }
         # Never let an old isolate artifact masquerade as the new selection.
         (self.artifact_dir(job_id) / "focused_isolated.mp4").unlink(missing_ok=True)
         self._write_isolate_state(job_id, state)
-        self._isolate_queue.put((job_id, set(selected_group_ids), generation))
+        self._isolate_queue.put((job_id, set(selected_group_ids), generation, cfg))
         return state
 
     def get_isolate(self, job_id: str) -> dict | None:
@@ -155,19 +174,13 @@ class TrackingJobManager:
         with self._lock:
             job_dir = self.artifact_dir(job_id)
             job_dir.mkdir(parents=True, exist_ok=True)
-            path = job_dir / "job.json"
-            tmp = job_dir / "job.tmp.json"
-            tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-            tmp.replace(path)
+            write_json_atomic(job_dir / "job.json", state)
 
     def _write_isolate_state(self, job_id: str, state: dict) -> None:
         with self._lock:
             job_dir = self.artifact_dir(job_id)
             job_dir.mkdir(parents=True, exist_ok=True)
-            path = job_dir / "isolate_status.json"
-            tmp = job_dir / "isolate_status.tmp.json"
-            tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-            tmp.replace(path)
+            write_json_atomic(job_dir / "isolate_status.json", state)
 
     def _update_isolate(
         self,
@@ -206,9 +219,7 @@ class TrackingJobManager:
             }
         )
         with self._lock:
-            tmp = self.artifact_dir(job_id) / "selection_summary.tmp.json"
-            tmp.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-            tmp.replace(path)
+            write_json_atomic(path, summary)
 
     def _update(self, job_id: str, **changes) -> dict:
         state = self.get(job_id)
@@ -273,19 +284,53 @@ class TrackingJobManager:
     def _run_isolate(self) -> None:
         from src.pipeline.isolate_renderer import (
             IsolateCancelled,
-            render_temporal_isolate,
+            isolate_mode_label,
+            render_isolate,
+            resolve_isolate_mode,
         )
+        from src.pipeline.lama_inpaint import warmup_lama
+        from src.pipeline.player_track_pipeline import load_pipeline_config
+
+        # Preload LaMa onto the user's GPU so the first Confirm is not cold.
+        try:
+            pipeline_cfg = load_pipeline_config()
+            isolate_cfg = dict(pipeline_cfg.get("isolate") or {})
+            info = warmup_lama(isolate_cfg)
+            if info.get("warmed"):
+                logger.info(
+                    "Isolate GPU warm: LaMa tile=%s working_side=%s",
+                    info.get("max_side"),
+                    info.get("working_side"),
+                )
+            else:
+                logger.info(
+                    "Isolate GPU warm skipped (cuda=%s lama=%s)",
+                    info.get("cuda"),
+                    info.get("lama_package"),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Isolate GPU warm failed (will load on first Confirm): %s", exc)
 
         while True:
-            job_id, selected_group_ids, generation = self._isolate_queue.get()
+            job_id, selected_group_ids, generation, isolate_cfg = (
+                self._isolate_queue.get()
+            )
             started = time.perf_counter()
             last_update = 0.0
+            effective_mode = resolve_isolate_mode(isolate_cfg)
             try:
+                stage_start = (
+                    "loading_lama"
+                    if effective_mode in {"hybrid", "ai"}
+                    else "preparing_temporal_background"
+                )
                 if self._update_isolate(
                     job_id,
                     generation,
                     status="processing",
-                    stage="preparing_temporal_background",
+                    stage=stage_start,
+                    effective_mode=effective_mode,
+                    method=isolate_mode_label(effective_mode),
                 ) is None:
                     continue
 
@@ -320,10 +365,11 @@ class TrackingJobManager:
                     )
                     last_update = now
 
-                output = render_temporal_isolate(
+                output = render_isolate(
                     self.artifact_dir(job_id),
                     selected_group_ids,
                     generation,
+                    isolate_cfg=isolate_cfg,
                     progress_callback=progress,
                     cancelled=cancelled,
                     quiet=True,
@@ -336,6 +382,13 @@ class TrackingJobManager:
                 self._mark_isolate_ready_in_summary(
                     job_id, generation, output
                 )
+                method_label = {
+                    "hybrid": "clean_isolate_hybrid_temporal_lama",
+                    "ai": "clean_isolate_ai_lama",
+                }.get(
+                    effective_mode,
+                    "aligned_temporal_background_plus_spatial_fallback",
+                )
                 self._update_isolate(
                     job_id,
                     generation,
@@ -347,7 +400,8 @@ class TrackingJobManager:
                     ).get("total_frames", 0),
                     eta_seconds=0,
                     artifact=str(output.resolve()),
-                    method="aligned_temporal_background_plus_spatial_fallback",
+                    method=method_label,
+                    effective_mode=effective_mode,
                 )
             except IsolateCancelled:
                 # A newer Confirm owns the durable status and output path.

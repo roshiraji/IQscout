@@ -96,7 +96,8 @@ button {
 }
 
 button:hover {
-  opacity: 0.92;
+  background: #d9d9d9;
+  opacity: 1;
 }
 
 button:disabled {
@@ -248,6 +249,68 @@ button:disabled {
   width: 150px;
   height: 7px;
   accent-color: #00d26a;
+}
+
+.confirm-progress-panel {
+  margin-top: 12px;
+}
+
+.ingest-progress-panel {
+  margin-top: 12px;
+}
+
+.confirm-progress-meter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 12px;
+}
+
+.confirm-progress-meter progress {
+  flex: 1;
+  height: 10px;
+  accent-color: #00d26a;
+}
+
+.confirm-progress-meter strong {
+  min-width: 3ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.confirm-stage-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px 12px;
+}
+
+.confirm-stage-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #8a8a8a;
+}
+
+.confirm-stage-done {
+  color: #7dcea0 !important;
+}
+
+.confirm-stage-active {
+  color: #f4f4f4 !important;
+  font-weight: 600;
+}
+
+.confirm-stage-marker {
+  font-size: 11px;
+  width: 1em;
+  text-align: center;
+}
+
+.confirm-isolate-row {
+  margin-top: 10px;
 }
 
 .player-box-hit-only {
@@ -449,6 +512,37 @@ button:disabled {
 .scorecard-subhead {
   margin-top: 4px;
   max-width: 42rem;
+}
+
+.offense-override-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 2px;
+  border-top: 1px solid #2a3348;
+}
+
+.offense-override-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.offense-override-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.offense-override-buttons .secondary-button.is-active {
+  border-color: #6ea8fe;
+  color: #dce9ff;
+  background: #1a2740;
+}
+
+.offense-override-hint {
+  margin: 0;
+  font-size: 0.85rem;
 }
 
 .scorecard-hero {
@@ -744,3 +838,268 @@ th {
     padding: 24px 14px 34px;
   }
 }
+
+/* ---- Desktop app boot + quit ---- */
+
+.boot-screen {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 0%, #1c1c1c 0%, #0a0a0a 42%, #050505 100%);
+}
+
+.boot-orbit {
+  position: absolute;
+  width: 720px;
+  height: 720px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  animation: boot-orbit-pulse 6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.boot-orbit::before,
+.boot-orbit::after {
+  content: "";
+  position: absolute;
+  inset: 12%;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.035);
+}
+
+.boot-orbit::after {
+  inset: 28%;
+}
+
+@keyframes boot-orbit-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: translate(-50%, -50%) scale(1.03);
+  }
+}
+
+.boot-screen-inner {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  padding: 36px 22px 48px;
+  max-width: 720px;
+  width: min(720px, 94vw);
+}
+
+.boot-eyebrow {
+  margin: 0 0 8px;
+  color: #8f8f8f;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.boot-brand {
+  margin: 0;
+  font-size: clamp(42px, 8vw, 58px);
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: -0.03em;
+}
+
+.boot-tagline {
+  margin: 12px auto 28px;
+  max-width: 34rem;
+  color: #b8b8b8;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.boot-pipeline {
+  list-style: none;
+  margin: 0 0 28px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.boot-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid #262626;
+  background: rgba(17, 17, 17, 0.85);
+  color: #7a7a7a;
+  font-size: 12px;
+  transition:
+    color 0.35s ease,
+    border-color 0.35s ease,
+    background 0.35s ease,
+    transform 0.35s ease;
+}
+
+.boot-step-num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  background: #222;
+  color: #999;
+}
+
+.boot-step-active {
+  color: #f2f2f2;
+  border-color: #4a4a4a;
+  background: #161616;
+  transform: translateY(-1px);
+}
+
+.boot-step-active .boot-step-num {
+  background: #ffffff;
+  color: #111;
+}
+
+.boot-step-done {
+  color: #cfcfcf;
+  border-color: #333;
+}
+
+.boot-step-done .boot-step-num {
+  background: #2e2e2e;
+  color: #fff;
+}
+
+.boot-story {
+  animation: boot-story-in 0.45s ease;
+}
+
+@keyframes boot-story-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.boot-story-card {
+  text-align: left;
+  margin: 0 auto 22px;
+  padding: 22px 24px;
+  max-width: 520px;
+  border-radius: 18px;
+  border: 1px solid #242424;
+  background: linear-gradient(180deg, #141414 0%, #101010 100%);
+}
+
+.boot-story-kicker {
+  margin: 0 0 6px;
+  color: #8a8a8a;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.boot-story-title {
+  margin: 0 0 8px;
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.boot-story-detail {
+  margin: 0;
+  color: #c2c2c2;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.boot-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.boot-spinner {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  flex-shrink: 0;
+  border: 2px solid #2a2a2a;
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: boot-spin 0.85s linear infinite;
+}
+
+@keyframes boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.boot-message {
+  margin: 0;
+  color: #c8c8c8;
+  font-size: 14px;
+}
+
+.boot-error {
+  color: #ff8f8f;
+  font-size: 14px;
+  line-height: 1.45;
+  max-width: 28rem;
+  margin: 0 auto;
+}
+
+.app-quit-button {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  background: #1a1a1a;
+  color: #e8e8e8;
+  border: 1px solid #333;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.app-quit-button:hover {
+  background: #2a2a2a;
+  border-color: #555;
+}
+
+@media (max-width: 640px) {
+  .boot-step-label {
+    display: none;
+  }
+
+  .boot-step {
+    padding: 8px;
+  }
+
+  .boot-story-card {
+    text-align: center;
+  }
+}
+

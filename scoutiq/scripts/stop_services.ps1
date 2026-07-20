@@ -103,6 +103,22 @@ $stoppedCount += Stop-PortListeners -Port 5174 -Label "React (alt)"
 $stoppedCount += Stop-PortListeners -Port 8501 -Label "Streamlit"
 $stoppedCount += Stop-PortListeners -Port 8000 -Label "FastAPI"
 
+# Close ScoutIQ app-mode browser windows (dedicated profile under .scoutiq_runtime).
+$profileDir = Join-Path $RuntimeDir "browser_profile"
+if (Test-Path $profileDir) {
+    $browserNames = @("msedge.exe", "chrome.exe")
+    foreach ($name in $browserNames) {
+        $procs = Get-CimInstance Win32_Process -Filter "Name = '$name'" -ErrorAction SilentlyContinue
+        foreach ($proc in $procs) {
+            if ($proc.CommandLine -and ($proc.CommandLine -like "*$profileDir*")) {
+                if (Stop-ProcessSafe -ProcessId ([int]$proc.ProcessId) -Label "ScoutIQ browser") {
+                    $stoppedCount++
+                }
+            }
+        }
+    }
+}
+
 if (Test-Path $PidFile) {
     Remove-Item -Path $PidFile -Force -ErrorAction SilentlyContinue
     Write-Host "Removed runtime PID file." -ForegroundColor DarkGray

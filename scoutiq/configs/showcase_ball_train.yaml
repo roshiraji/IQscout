@@ -1,0 +1,21 @@
+# Ball detect training — separate from player seg (training_loop_v2).
+# Run from scoutiq/:
+#   ..\.venv\Scripts\python.exe -m src.ball train --config configs/showcase_ball_train.yaml
+
+dataset:
+  data_yaml: data/datasets/wnba_ball_det/data.yaml
+
+output:
+  runs_root: outputs/training_loop_ball
+
+training:
+  model: yolo11n.pt
+  epochs: 60
+  max_rounds: 2
+  imgsz: 960
+  batch: 12          # was 8; drop to 8 if CUDA OOM on 8GB cards
+  workers: 2
+  device: 0
+
+targets:
+  min_box_map50: 0.35

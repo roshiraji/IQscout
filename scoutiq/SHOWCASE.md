@@ -166,3 +166,33 @@ Highlight hard cuts can reset track IDs — expected limitation.
 
 - **Autolabel:** sequential GDINO then SAM2 today (both on default CUDA). Split across cards later via `CUDA_VISIBLE_DEVICES` per process if needed.
 - **Train:** `device: null` auto-selects `[0, 1]` when two GPUs are visible (`configs/showcase_train.yaml`).
+
+## Ball detection → offense / defense (separate weights)
+
+Player seg weights stay at `outputs/training_loop_v2/best_player_seg_v2.pt`. Ball is a **dedicated** detect model:
+
+```powershell
+# Smoke (tiny labels + 1 epoch)
+..\.venv\Scripts\python.exe scripts\run_training_ball.py --smoke
+
+# Best labels: 3-game stratified + SAM-refined boxes + hard negatives
+..\.venv\Scripts\python.exe scripts\run_training_ball.py --sam-refine --max-frames 4500 --force
+```
+
+Outputs:
+
+- `data/auto_labels_ball/` — SAM-refined ball boxes + hard negatives (jerseys/logos/scorebug)
+- `data/datasets/wnba_ball_det/` — scene-segment train/val YOLO detect
+- `outputs/training_loop_ball/best_ball_det.pt` — **does not** overwrite player weights
+- `outputs/training_loop_ball/TRAINING_REPORT_ball.md`
+
+### Offense / defense — fused, per-window (5 workstreams)
+
+1. **Trustworthy ball** — SAM-refined labels + hard negatives; short-gap tracker
+   coasting + linear interpolation (`src/ball/track.py`) so brief misses don't drop possession.
+2. **Signal fusion** (`src/ball/fusion.py`) — possession + attacking direction + team spread + continuity → per-team offense score.
+3. **Hoop + direction** (`src/ball/hoop.py`) — separate `best_hoop_det.pt` anchors which basket is attacked (`ball.hoop.enabled: true`).
+4. **Possession windows** — clip is split on scene cuts + possession flips; each window gets its own O/D + confidence + timestamps in `possession.json.windows`.
+5. **Honest validation** — `scripts/eval_offense_defense.py` scores O/D vs `data/eval/od_ground_truth.json`; O/D auto-declares only above confidence+margin, else the manual override is the floor.
+
+Live Analyze (`ball.enabled` in `configs/player_tracking_mvp.yaml`) writes `ball_tracks.jsonl.gz`, `hoop_tracks.jsonl.gz`, `ball_summary.json`, and `possession.json` (with `windows`). Manual override: `POST /api/jobs/<id>/offense-team` (`Team 0` / `Team 1` / `Auto`) — recomputes Matchup Outcomes roles only.

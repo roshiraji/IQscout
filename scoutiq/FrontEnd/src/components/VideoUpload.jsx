@@ -19,7 +19,7 @@ function VideoUpload({ onAnalyze, isBusy, isSaving = false, selectedFileName }) 
 
   return (
     <div className="card upload-panel">
-      <h2>Upload NBA Video</h2>
+      <h2>Upload WNBA Video</h2>
       <p className="upload-hint">MP4 only · 5–15 seconds · then click players to track</p>
       <div className="upload-row">
         <input
@@ -36,13 +36,14 @@ function VideoUpload({ onAnalyze, isBusy, isSaving = false, selectedFileName }) 
       {file && <p className="file-name">Selected: {file.name}</p>}
       {isBusy && selectedFileName && (
         <p className="status-text">
-          Validating {selectedFileName} and finding the best player snapshot… this can take 20–30
-          seconds.
+          Ingesting {selectedFileName} — watch the progress card below for upload,
+          validation, and full-clip tracking status.
         </p>
       )}
       {isSaving && (
         <p className="status-text">
-          Running ByteTrack on your selected players across the rest of the clip…
+          Confirming your selection — building focused + segmentation previews and
+          Matchup Outcomes. Watch the progress card below for live status.
         </p>
       )}
     </div>

@@ -77,3 +77,57 @@ quality:
   min_mean_detection_confidence: 0.50
   max_short_track_ratio: 0.35
   max_track_gap_frames: 30
+
+# Dedicated basketball detector (separate from player seg weights).
+# Soft-fails to HSV orange proposals when weights are missing.
+ball:
+  enabled: true
+  weights: outputs/training_loop_ball/best_ball_det.pt
+  conf: 0.25
+  device: "cpu"          # use "0" when CUDA available and ball train done
+  every_n_frames: 1      # raise to 2–3 on CPU if Analyze is too slow
+  hsv_fallback: true
+  track:
+    iou_threshold: 0.15
+    max_missed: 12
+    interpolate:         # WS1: fill short ball gaps between real detections
+      enabled: true
+      max_gap: 5
+      min_conf: 0.2
+  hoop:                  # WS3: attacking-direction anchor (optional)
+    enabled: false       # set true once best_hoop_det.pt is trained
+    weights: outputs/training_loop_hoop/best_hoop_det.pt
+    conf: 0.30
+    every_n_frames: 15
+  possession:
+    max_dist_norm: 0.12
+    min_held_fraction: 0.12
+    min_confidence: 0.45
+    min_window_frames: 8   # WS4: possession windows
+    margin: 0.12           # WS2: winning team must beat runner-up by this
+    fusion_weights:        # WS2: signal weights (sum ~1.0)
+      possession: 0.55
+      direction: 0.25
+      spread: 0.08
+      continuity: 0.12
+
+# Focused-player isolate preview (background job after Confirm).
+# mode: hybrid   = temporal neighbor fill, then LaMa on leftovers (best default)
+#       ai       = LaMa only on full erase mask
+#       temporal = neighbor fill + OpenCV inpaint (CPU-friendly)
+isolate:
+  mode: hybrid             # hybrid | ai | temporal — falls back to temporal if GPU/pkg missing
+  ai_backend: lama         # lama (propainter reserved)
+  erase_dilate: 13         # stronger non-selected fringe removal
+  keep_dilate: 7           # protect selected player pixels under overlap
+  bbox_expand: 0.12        # expand erase bbox to catch shoes/arms
+  fallback_to_temporal: true
+  lama_leftover_min_pixels: 64
+  min_temporal_samples: 2  # ignore weak 1-neighbor fills (they look smeary)
+  lama_full_erase: true    # LaMa repaints whole hole — kills stuck blur
+  hard_composite: true     # no soft-blend of removed players back in
+  # Fast path on local GPU (RTX 3070 8GB): crop erase region + downscale for LaMa.
+  ai_working_side: 768     # set null or "full" for max quality / slower
+  crop_pad: 48
+  orb_features: 700        # temporal align cost on CPU
+  # ai_max_side: 1024      # optional hard tile cap; omit = VRAM probe + cache

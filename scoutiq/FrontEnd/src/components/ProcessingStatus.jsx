@@ -4,7 +4,14 @@ function statusClass(status) {
   return "status-warning";
 }
 
-function ProcessingStatus({ validation, labeling, error, snapshot, job }) {
+function ProcessingStatus({
+  validation,
+  labeling,
+  error,
+  snapshot,
+  job,
+  hideJobProgress = false,
+}) {
   if (error) {
     return (
       <div className="card result-panel status-rejected">
@@ -63,7 +70,7 @@ function ProcessingStatus({ validation, labeling, error, snapshot, job }) {
         </div>
       )}
 
-      {status === "approved" && job && job.status !== "ready" && (
+      {!hideJobProgress && status === "approved" && job && job.status !== "ready" && (
         <div className="labeling-summary">
           <h3>Full-clip tracking: {job.stage || job.status}</h3>
           <p>

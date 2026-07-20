@@ -20,6 +20,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -189,9 +190,17 @@ def _draw_tracked_frame(
     tracked: list[dict],
     label_by_id: dict[int, str],
     color_by_id: dict[int, tuple[int, int, int]] | None = None,
+    *,
+    draw_style: str = "full",
 ) -> None:
-    """Draw only the user-selected tracked players (mask + bbox + label)."""
+    """Draw only the user-selected tracked players.
+
+    draw_style:
+      - ``full``: jersey mask + bbox + label (default Confirm preview)
+      - ``masks``: jersey-colored segmentation only (no boxes / text)
+    """
     color_by_id = color_by_id or {}
+    masks_only = draw_style == "masks"
     for det in tracked:
         draw_id = det.get("person_group_id")
         if draw_id is None:
@@ -210,7 +219,19 @@ def _draw_tracked_frame(
             overlay = frame.copy()
             cv2.fillPoly(overlay, [pts], color)
             cv2.addWeighted(overlay, MASK_ALPHA, frame, 1 - MASK_ALPHA, 0, frame)
-            cv2.polylines(frame, [pts], True, color, 1, cv2.LINE_AA)
+            if not masks_only:
+                cv2.polylines(frame, [pts], True, color, 1, cv2.LINE_AA)
+        elif masks_only:
+            # Soft ellipse fill when polygon is missing so masks-only still shows them.
+            h, w = frame.shape[:2]
+            soft = _soft_bbox_cutout_mask(h, w, det.get("bbox_xyxy") or [0, 0, 0, 0])
+            if soft.any():
+                overlay = frame.copy()
+                overlay[soft > 0] = color
+                cv2.addWeighted(overlay, MASK_ALPHA, frame, 1 - MASK_ALPHA, 0, frame)
+
+        if masks_only:
+            continue
 
         box = det.get("bbox_xyxy") or [0, 0, 0, 0]
         x1, y1, x2, y2 = [int(v) for v in box[:4]]
@@ -384,14 +405,28 @@ def render_selected_tracks(
     selected_person_group_ids: list[int] | None = None,
     selected_players: list[dict] | None = None,
     quiet: bool = False,
+    progress_cb: Callable[..., None] | None = None,
 ) -> dict:
-    """Render selected person groups from canonical artifacts (no YOLO/ByteTrack)."""
+    """Render selected person groups from canonical artifacts (no YOLO/ByteTrack).
+
+    progress_cb(stage: str, progress: float, detail: str | None) is optional;
+    progress is 0..1 for the Confirm UI.
+    """
+    def _progress(stage: str, progress: float, detail: str | None = None) -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(stage, max(0.0, min(1.0, float(progress))), detail)
+        except Exception:  # noqa: BLE001
+            pass
+
     artifact_dir = Path(job_dir).resolve()
     summary_path = artifact_dir / "summary.json"
     tracks_path = artifact_dir / "tracks.jsonl.gz"
     if not summary_path.is_file() or not tracks_path.is_file():
         raise FileNotFoundError("Canonical tracking artifacts are missing for this job.")
 
+    _progress("loading_selection", 0.04, "Locking your selected players…")
     canonical = json.loads(summary_path.read_text(encoding="utf-8"))
     video_path = Path(canonical["video_path"])
     selected_group_ids, _track_to_group = _resolve_selected_person_groups(
@@ -407,6 +442,12 @@ def render_selected_tracks(
             "Select at least two person groups for coach insights "
             "(pairwise metrics require a primary pair)."
         )
+
+    _progress(
+        "loading_tracks",
+        0.10,
+        f"Loading tracks for {len(selected_group_ids)} players…",
+    )
 
     label_by_group_id = {
         gid: f"Person #{gid}" for gid in sorted(selected_group_ids)
@@ -462,18 +503,32 @@ def render_selected_tracks(
 
     output_video = artifact_dir / "focused_players.mp4"
     tmp_video = artifact_dir / "focused_players.tmp.mp4"
+    output_masks_video = artifact_dir / "focused_masks.mp4"
+    tmp_masks_video = artifact_dir / "focused_masks.tmp.mp4"
     output_csv = artifact_dir / "selected_tracks.csv"
     output_summary = artifact_dir / "selection_summary.json"
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(tmp_video), fourcc, fps, (width, height))
+    masks_writer = cv2.VideoWriter(str(tmp_masks_video), fourcc, fps, (width, height))
     if not writer.isOpened():
         cap.release()
         raise RuntimeError(f"Could not create focused preview: {tmp_video}")
+    if not masks_writer.isOpened():
+        writer.release()
+        cap.release()
+        raise RuntimeError(f"Could not create masks preview: {tmp_masks_video}")
 
     rows: list[dict] = []
     frames_rendered = 0
     frames_with_selected = 0
     start = time.perf_counter()
+    expected_frames = max(int(canonical.get("source_frame_count") or 0), 1)
+    last_progress_emit = 0.0
+    _progress(
+        "rendering_preview",
+        0.15,
+        f"Building focused + segmentation previews (0 / {expected_frames})…",
+    )
     try:
         with gzip.open(tracks_path, "rt", encoding="utf-8") as handle:
             for line in handle:
@@ -540,17 +595,45 @@ def render_selected_tracks(
                     annotated, tracked, label_by_group_id, color_by_group_id
                 )
                 writer.write(annotated)
+                masks_frame = frame.copy()
+                _draw_tracked_frame(
+                    masks_frame,
+                    tracked,
+                    label_by_group_id,
+                    color_by_group_id,
+                    draw_style="masks",
+                )
+                masks_writer.write(masks_frame)
                 frames_rendered += 1
+                frac = frames_rendered / max(expected_frames, 1)
+                progress_val = 0.15 + 0.55 * min(frac, 1.0)
+                if (
+                    progress_val - last_progress_emit >= 0.03
+                    or frames_rendered >= expected_frames
+                ):
+                    last_progress_emit = progress_val
+                    _progress(
+                        "rendering_preview",
+                        progress_val,
+                        f"Building focused + segmentation previews "
+                        f"({frames_rendered} / {expected_frames})…",
+                    )
     finally:
         cap.release()
         writer.release()
+        masks_writer.release()
 
     if not rows:
         tmp_video.unlink(missing_ok=True)
+        tmp_masks_video.unlink(missing_ok=True)
         raise RuntimeError("Selected person groups had no positions in canonical data.")
 
+    _progress("encoding_videos", 0.72, "Encoding browser-ready previews…")
     tmp_video.replace(output_video)
+    tmp_masks_video.replace(output_masks_video)
     encode_for_browser(output_video, quiet=quiet)
+    _progress("encoding_videos", 0.80, "Encoding segmentation-only preview…")
+    encode_for_browser(output_masks_video, quiet=quiet)
     _write_tracking_csv(output_csv, rows)
     runtime = round(time.perf_counter() - start, 2)
     source_frame_count = int(
@@ -563,6 +646,14 @@ def render_selected_tracks(
     quality_canon = canonical.get("quality") or {}
 
     primary_pair = tuple(sorted(selected_group_ids)[:2])
+    possession_payload: dict = {}
+    possession_path = artifact_dir / "possession.json"
+    if possession_path.is_file():
+        try:
+            possession_payload = json.loads(possession_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            possession_payload = {}
+    _progress("coach_insights", 0.88, "Computing Matchup Outcomes…")
     coach_insights = compute_coach_insights(
         rows,
         source_frame_count=source_frame_count,
@@ -571,6 +662,7 @@ def render_selected_tracks(
         label_by_group=label_by_group_id,
         team_meta_by_group=team_meta_by_group,
         primary_pair=primary_pair,
+        possession=possession_payload,
     )
     coach_insights_path = artifact_dir / "coach_insights.json"
     coach_insights_path.write_text(
@@ -608,12 +700,16 @@ def render_selected_tracks(
         "tracks_csv": str(output_csv.resolve()),
         "pair_distances_csv": str(pair_distances_path.resolve()),
         "tracking_video": str(output_video.resolve()),
+        "tracking_masks_video": str(output_masks_video.resolve()),
         "isolated_tracking_video": None,
         "isolation_available": False,
         "isolation_status": "pending",
         "coach_insights": coach_insights,
         "coach_narrative": coach_narrative,
         "coach_insights_json": str(coach_insights_path.resolve()),
+        "possession": possession_payload,
+        "offense_team_id": possession_payload.get("offense_team_id"),
+        "defense_team_id": possession_payload.get("defense_team_id"),
         "quality": {
             "complete_clip": frames_rendered == source_frame_count,
             "frame_coverage": frame_coverage,
@@ -640,6 +736,7 @@ def render_selected_tracks(
     }
     output_summary.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     summary["summary_json"] = str(output_summary.resolve())
+    _progress("ready", 0.96, "Focused preview ready — queuing isolate…")
     return summary
 
 

@@ -13,6 +13,9 @@ This README summarizes what shipped on today’s branch: stronger jersey OCR, ma
 2. **Mask-bottom stance distances** — pairwise gaps use segmentation foot proxies when available, exported as JSON + CSV.
 3. **Segmentation training v2** — trained on all three unique Fever highlight games; `best_player_seg_v2.pt` beats prior production metrics on held-out scenes.
 4. **Matchup Outcomes UI** — Stay Close / Create Space (or Off-Ball Action) scores out of 100 for selected pairs — performance outcomes, not camera coverage.
+5. **Ball → offense/defense (2026-07-18)** — dedicated `best_ball_det.pt` (separate from player seg), possession inference, manual offense-team override, Matchup Outcomes roles when confident.
+
+See also: [`SHOWCASE.md`](SHOWCASE.md) (ball section) and [`outputs/training_loop_ball/TRAINING_REPORT_ball.md`](outputs/training_loop_ball/TRAINING_REPORT_ball.md).
 
 ---
 
