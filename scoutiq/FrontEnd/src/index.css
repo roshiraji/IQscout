@@ -523,6 +523,14 @@ button:disabled {
   border-top: 1px solid #2a3348;
 }
 
+.offense-override-lock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  flex: 1 1 180px;
+}
+
 .offense-override-label {
   font-weight: 600;
   font-size: 0.9rem;
@@ -537,6 +545,18 @@ button:disabled {
 .offense-override-buttons .secondary-button.is-active {
   border-color: #6ea8fe;
   color: #dce9ff;
+  background: #1a2740;
+}
+
+.offense-override-buttons .offense-team-red.is-active {
+  border-color: #e85d5d;
+  color: #ffd6d6;
+  background: #3a1c1c;
+}
+
+.offense-override-buttons .offense-team-blue.is-active {
+  border-color: #5b8def;
+  color: #d6e4ff;
   background: #1a2740;
 }
 

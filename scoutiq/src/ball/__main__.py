@@ -92,6 +92,47 @@ def cmd_hoop_train(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hoop_ref_autolabel(args: argparse.Namespace) -> int:
+    from src.ball.hoop_ref_seg import autolabel_hoop_ref_manifest
+
+    stats = autolabel_hoop_ref_manifest(
+        manifest_path=_resolve(args.manifest),
+        output_root=_resolve(args.output),
+        frames_root=_resolve(args.frames_root),
+        max_frames=args.max_frames,
+        skip_existing=not args.force,
+        stride=args.stride,
+    )
+    print(json.dumps(stats, indent=2))
+    return 0
+
+
+def cmd_hoop_ref_build_dataset(args: argparse.Namespace) -> int:
+    from src.ball.hoop_ref_seg import build_hoop_ref_yolo_seg_dataset
+
+    data_yaml = build_hoop_ref_yolo_seg_dataset(
+        autolabel_root=_resolve(args.autolabel),
+        dataset_root=_resolve(args.dataset),
+        frames_root=_resolve(args.frames_root),
+        val_ratio=args.val_ratio,
+        seed=args.seed,
+    )
+    print(f"Dataset yaml: {data_yaml}")
+    return 0
+
+
+def cmd_hoop_ref_train(args: argparse.Namespace) -> int:
+    from src.showcase.train_loop import run_training_from_config
+
+    cfg = yaml.safe_load(_resolve(args.config).read_text(encoding="utf-8")) or {}
+    if args.smoke:
+        cfg.setdefault("training", {})["epochs"] = 1
+        cfg.setdefault("training", {})["max_rounds"] = 1
+    weights = run_training_from_config(cfg, SCOUTIQ_ROOT)
+    print(f"Hoop+ref seg weights: {weights}")
+    return 0
+
+
 def cmd_build_dataset(args: argparse.Namespace) -> int:
     from src.ball.autolabel import build_ball_yolo_dataset
 
@@ -180,6 +221,28 @@ def main() -> int:
     p_ht.add_argument("--config", default="configs/showcase_hoop_train.yaml")
     p_ht.add_argument("--smoke", action="store_true")
     p_ht.set_defaults(func=cmd_hoop_train)
+
+    p_hra = sub.add_parser("hoop-ref-autolabel", help="GDINO+SAM2 hoop/ref → YOLO-seg")
+    p_hra.add_argument("--manifest", default="data/frames/manifest.csv")
+    p_hra.add_argument("--output", default="data/auto_labels_hoop_ref")
+    p_hra.add_argument("--frames-root", default="data/frames")
+    p_hra.add_argument("--max-frames", type=int, default=None)
+    p_hra.add_argument("--stride", type=int, default=3)
+    p_hra.add_argument("--force", action="store_true")
+    p_hra.set_defaults(func=cmd_hoop_ref_autolabel)
+
+    p_hrd = sub.add_parser("hoop-ref-build-dataset", help="Scene-segment hoop+ref YOLO-seg")
+    p_hrd.add_argument("--autolabel", default="data/auto_labels_hoop_ref")
+    p_hrd.add_argument("--dataset", default="data/datasets/wnba_hoop_ref_seg")
+    p_hrd.add_argument("--frames-root", default="data/frames")
+    p_hrd.add_argument("--val-ratio", type=float, default=0.15)
+    p_hrd.add_argument("--seed", type=int, default=42)
+    p_hrd.set_defaults(func=cmd_hoop_ref_build_dataset)
+
+    p_hrt = sub.add_parser("hoop-ref-train", help="Train best_hoop_ref_seg.pt")
+    p_hrt.add_argument("--config", default="configs/showcase_hoop_ref_seg_train.yaml")
+    p_hrt.add_argument("--smoke", action="store_true")
+    p_hrt.set_defaults(func=cmd_hoop_ref_train)
 
     p_ds = sub.add_parser("build-dataset", help="Scene-segment YOLO detect split")
     p_ds.add_argument("--autolabel", default="data/auto_labels_ball")

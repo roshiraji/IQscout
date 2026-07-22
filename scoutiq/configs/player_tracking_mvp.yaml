@@ -94,10 +94,10 @@ ball:
       enabled: true
       max_gap: 5
       min_conf: 0.2
-  hoop:                  # WS3: attacking-direction anchor (optional)
-    enabled: false       # set true once best_hoop_det.pt is trained
-    weights: outputs/training_loop_hoop/best_hoop_det.pt
-    conf: 0.30
+  hoop:                  # WS3: attacking-direction anchor
+    enabled: true
+    weights: outputs/training_loop_hoop_ref/best_hoop_ref_seg.pt
+    conf: 0.40           # precision/recall balance (0.80+ is too sparse)
     every_n_frames: 15
   possession:
     max_dist_norm: 0.12

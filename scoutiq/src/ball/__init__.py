@@ -7,6 +7,7 @@ __all__ = [
     "detect",
     "fusion",
     "hoop",
+    "hoop_ref_seg",
     "live",
     "possession",
     "proposals",

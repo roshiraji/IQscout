@@ -1,0 +1,25 @@
+# Hoop + referee YOLO-seg training (separate from player seg + ball detect).
+# Classes: 0=hoop, 1=referee. Batch 12 for full epoch progress logging.
+# Run from scoutiq/:
+#   ..\.venv\Scripts\python.exe -u scripts\run_hoop_ref_seg_training.py
+
+dataset:
+  data_yaml: data/datasets/wnba_hoop_ref_seg/data.yaml
+
+output:
+  runs_root: outputs/training_loop_hoop_ref
+  weights_name: best_hoop_ref_seg.pt
+
+training:
+  model: yolo11n-seg.pt
+  epochs: 80
+  max_rounds: 2
+  imgsz: 960
+  batch: 12
+  workers: 2
+  device: 0
+
+targets:
+  # High enough to support live conf 0.80–0.90 after promotion.
+  min_box_map50: 0.55
+  min_mask_map50: 0.45

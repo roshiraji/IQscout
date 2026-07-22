@@ -132,9 +132,9 @@ def load_pipeline_config(config_path: str | Path | None = None) -> dict:
                 "interpolate": {"enabled": True, "max_gap": 5, "min_conf": 0.2},
             },
             "hoop": {
-                "enabled": False,
-                "weights": "outputs/training_loop_hoop/best_hoop_det.pt",
-                "conf": 0.30,
+                "enabled": True,
+                "weights": "outputs/training_loop_hoop_ref/best_hoop_ref_seg.pt",
+                "conf": 0.40,
                 "every_n_frames": 15,
             },
             "possession": {

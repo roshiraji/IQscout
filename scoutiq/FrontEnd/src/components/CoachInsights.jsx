@@ -134,6 +134,19 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
     scorecard.offense_team_id ??
     glance.offense_team_id ??
     null;
+  const defenseTeamId =
+    possession.defense_team_id ??
+    scorecard.defense_team_id ??
+    glance.defense_team_id ??
+    (offenseTeamId === 0 ? 1 : offenseTeamId === 1 ? 0 : null);
+  const teamName = (id) => (id === 0 ? "Red" : id === 1 ? "Blue" : null);
+  const offenseName = teamName(offenseTeamId);
+  const defenseName = teamName(defenseTeamId);
+  const lockSource = scorecard.role_source || possession.source || "possession";
+  const lockLine =
+    offenseName && defenseName
+      ? `Offense: ${offenseName} · Defense: ${defenseName}`
+      : "Offense / defense not locked — pick Red or Blue below";
 
   async function setOffenseTeam(mode, teamId = null) {
     if (!jobId) return;
@@ -241,27 +254,44 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
 
       {jobId ? (
         <div className="offense-override-row">
-          <span className="offense-override-label">Offense team</span>
+          <div className="offense-override-lock">
+            <span className="offense-override-label">{lockLine}</span>
+            {offenseName ? (
+              <span className="status-text offense-override-hint">
+                {lockSource === "manual_override"
+                  ? "Locked by your Red / Blue choice"
+                  : rolesConfident
+                    ? `Locked via ${lockSource}`
+                    : "Roles pending — override below if Auto is wrong"}
+              </span>
+            ) : null}
+          </div>
           <div className="offense-override-buttons">
             <button
               type="button"
-              className={`secondary-button${offenseTeamId === 0 ? " is-active" : ""}`}
+              className={`secondary-button offense-team-red${
+                lockSource === "manual_override" && offenseTeamId === 0 ? " is-active" : ""
+              }`}
               disabled={overrideBusy}
               onClick={() => setOffenseTeam("manual", 0)}
             >
-              Team 0
+              Team Red on offense
             </button>
             <button
               type="button"
-              className={`secondary-button${offenseTeamId === 1 ? " is-active" : ""}`}
+              className={`secondary-button offense-team-blue${
+                lockSource === "manual_override" && offenseTeamId === 1 ? " is-active" : ""
+              }`}
               disabled={overrideBusy}
               onClick={() => setOffenseTeam("manual", 1)}
             >
-              Team 1
+              Team Blue on offense
             </button>
             <button
               type="button"
-              className={`secondary-button${offenseTeamId == null ? " is-active" : ""}`}
+              className={`secondary-button${
+                lockSource !== "manual_override" ? " is-active" : ""
+              }`}
               disabled={overrideBusy}
               onClick={() => setOffenseTeam("auto")}
             >
@@ -269,9 +299,7 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
             </button>
           </div>
           <span className="status-text offense-override-hint">
-            {rolesConfident
-              ? `Locked via ${scorecard.role_source || possession.source || "possession"}`
-              : "Set offense team when ball possession is uncertain"}
+            Click Red or Blue to force correct stats when Auto is unsure.
           </span>
           {overrideError ? (
             <p className="tracking-warning">{overrideError}</p>

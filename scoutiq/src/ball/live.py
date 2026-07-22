@@ -118,14 +118,17 @@ def run_ball_tracking_on_video(
 
             if hoop_ready and (frame_id % hoop_every_n == 0 or not last_hoops):
                 try:
-                    last_hoops = detect_hoops(
+                    detected = detect_hoops(
                         image,
                         weights=hoop_weights_path,
                         conf=hoop_conf,
                         device=device,
                     )
+                    # Carry last-known rim across missed frames / sparse cadence.
+                    if detected:
+                        last_hoops = detected
                 except Exception:  # noqa: BLE001
-                    last_hoops = []
+                    pass
             if hoop_handle is not None:
                 if last_hoops:
                     frames_with_hoop += 1

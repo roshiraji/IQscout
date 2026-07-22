@@ -104,6 +104,7 @@ def train_player_seg(
     resume_weights: Path | None = None,
     project_name: str = "player_seg",
     workers: int = 8,
+    export_name: str = "best_player_seg.pt",
 ) -> Path:
     from ultralytics import YOLO
 
@@ -160,8 +161,12 @@ def train_player_seg(
             raise FileNotFoundError(f"Training did not produce weights under {runs_root}")
         best = max(candidates, key=lambda p: p.stat().st_mtime)
 
-    export = runs_root / "best_player_seg.pt"
+    export = runs_root / export_name
     shutil.copy2(best, export)
+    last_name = export_name.replace("best_", "last_")
+    lasts = sorted(runs_root.glob("**/weights/last.pt"), key=lambda p: p.stat().st_mtime)
+    if lasts:
+        shutil.copy2(lasts[-1], runs_root / last_name)
     logger.info("Promoted weights → %s", export)
     return export
 
@@ -199,8 +204,10 @@ def run_training_from_config(cfg: dict, scoutiq_root: Path) -> Path:
         return p if p.is_absolute() else (scoutiq_root / p).resolve()
 
     train_cfg = cfg.get("training") or {}
+    out_cfg = cfg.get("output") or {}
     data_yaml = _resolve(cfg["dataset"]["data_yaml"])
-    runs_root = _resolve(cfg.get("output", {}).get("runs_root", "outputs/training_loop"))
+    runs_root = _resolve(out_cfg.get("runs_root", "outputs/training_loop"))
+    export_name = str(out_cfg.get("weights_name", "best_player_seg.pt"))
     epochs = int(train_cfg.get("epochs", 60))
     imgsz = int(train_cfg.get("imgsz", 960))
     batch = int(train_cfg.get("batch", 16))
@@ -220,7 +227,13 @@ def run_training_from_config(cfg: dict, scoutiq_root: Path) -> Path:
         for i in range(torch.cuda.device_count()):
             logger.info("GPU %d: %s", i, torch.cuda.get_device_name(i))
     resolved = resolve_train_device(device)
-    logger.info("Training will use device=%s batch=%d workers=%d", resolved, batch, workers)
+    logger.info(
+        "Training will use device=%s batch=%d workers=%d export=%s",
+        resolved,
+        batch,
+        workers,
+        export_name,
+    )
 
     history: list[dict] = []
     best_export: Path | None = None
@@ -239,6 +252,7 @@ def run_training_from_config(cfg: dict, scoutiq_root: Path) -> Path:
             resume_weights=resume,
             project_name=f"round_{round_id:03d}",
             workers=workers,
+            export_name=export_name,
         )
         metrics = validate_player_seg(weights, data_yaml, imgsz=imgsz, device=device)
         passed = metrics.get("box_map50", 0.0) >= min_box and metrics.get("mask_map50", 0.0) >= min_mask
@@ -253,4 +267,4 @@ def run_training_from_config(cfg: dict, scoutiq_root: Path) -> Path:
 
     summary = {"history": history, "best_weights": str(best_export) if best_export else None}
     (runs_root / "loop_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    return best_export or runs_root / "best_player_seg.pt"
+    return best_export or runs_root / export_name

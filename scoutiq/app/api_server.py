@@ -619,7 +619,13 @@ def set_offense_team(job_id: str, body: OffenseTeamOverrideRequest) -> dict:
         "message": (
             "Offense team set to Auto."
             if mode == "auto"
-            else f"Offense team set to team_id={offense_id}."
+            else (
+                "Offense team set to Team Red."
+                if offense_id == 0
+                else "Offense team set to Team Blue."
+                if offense_id == 1
+                else f"Offense team set to team_id={offense_id}."
+            )
         ),
         "possession": possession,
         "coach_insights": coach_insights,

@@ -47,8 +47,13 @@ def detect_hoops(
     conf: float = 0.30,
     device: str | int = "cpu",
     max_hoops: int = 2,
+    hoop_class_id: int = 0,
 ) -> list[dict]:
-    """Return rim/backboard boxes. Empty list if no weights / no detection."""
+    """Return rim/backboard boxes. Empty list if no weights / no detection.
+
+    For 2-class hoop+ref seg weights (0=hoop, 1=referee), only ``hoop_class_id``
+    detections are kept so referees are never treated as rims.
+    """
     if weights is None or not Path(weights).is_file():
         return []
     try:
@@ -63,13 +68,21 @@ def detect_hoops(
         if boxes is None:
             continue
         for box in boxes:
+            # Multi-class seg/det models: skip non-hoop classes (e.g. referee=1).
+            if box.cls is not None:
+                try:
+                    cls_id = int(box.cls[0])
+                except (TypeError, ValueError, IndexError):
+                    cls_id = hoop_class_id
+                if cls_id != int(hoop_class_id):
+                    continue
             xyxy = [float(v) for v in box.xyxy[0].tolist()[:4]]
             c = float(box.conf[0]) if box.conf is not None else 0.0
             out.append(
                 {
                     "bbox_xyxy": xyxy,
                     "confidence": round(c, 4),
-                    "class_id": 0,
+                    "class_id": int(hoop_class_id),
                     "class_name": "hoop",
                     "source": "hoop_yolo",
                 }
