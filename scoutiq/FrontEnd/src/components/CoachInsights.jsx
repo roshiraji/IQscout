@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { setOffenseTeam as apiSetOffenseTeam } from "../API/scoutiqAPI";
+
 function pct(value) {
   if (value == null || Number.isNaN(Number(value))) return "—";
   return `${Math.round(Number(value))}%`;
@@ -102,7 +105,10 @@ function GapSparkline({ series, personIds }) {
   );
 }
 
-function CoachInsights({ insights, narrative }) {
+function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
+  const [overrideBusy, setOverrideBusy] = useState(false);
+  const [overrideError, setOverrideError] = useState("");
+
   if (!insights || !Array.isArray(insights.pairs) || insights.pairs.length === 0) {
     return null;
   }
@@ -119,6 +125,47 @@ function CoachInsights({ insights, narrative }) {
   const pairLabel =
     (primary.labels || glance.players?.map((p) => p.label) || []).join(" vs ") ||
     "Selected pair";
+  const possession = insights.possession || {};
+  const rolesConfident = Boolean(
+    scorecard.roles_confident ?? glance.roles_confident
+  );
+  const offenseTeamId =
+    possession.offense_team_id ??
+    scorecard.offense_team_id ??
+    glance.offense_team_id ??
+    null;
+  const defenseTeamId =
+    possession.defense_team_id ??
+    scorecard.defense_team_id ??
+    glance.defense_team_id ??
+    (offenseTeamId === 0 ? 1 : offenseTeamId === 1 ? 0 : null);
+  const teamName = (id) => (id === 0 ? "Red" : id === 1 ? "Blue" : null);
+  const offenseName = teamName(offenseTeamId);
+  const defenseName = teamName(defenseTeamId);
+  const lockSource = scorecard.role_source || possession.source || "possession";
+  const lockLine =
+    offenseName && defenseName
+      ? `Offense: ${offenseName} · Defense: ${defenseName}`
+      : "Offense / defense not locked — pick Red or Blue below";
+
+  async function setOffenseTeam(mode, teamId = null) {
+    if (!jobId) return;
+    setOverrideBusy(true);
+    setOverrideError("");
+    try {
+      const payload = await apiSetOffenseTeam(jobId, {
+        mode,
+        offense_team_id: mode === "auto" ? null : teamId,
+      });
+      if (typeof onPossessionUpdated === "function") {
+        onPossessionUpdated(payload);
+      }
+    } catch (err) {
+      setOverrideError(err?.message || String(err));
+    } finally {
+      setOverrideBusy(false);
+    }
+  }
 
   const stayClose = score100(
     scorecard.stay_close_score ??
@@ -170,7 +217,9 @@ function CoachInsights({ insights, narrative }) {
           <h2>Matchup Outcomes</h2>
           <p className="status-text scorecard-subhead">
             {isOpponent
-              ? "Who won the gap on this clip: stay attached, or create space and get away."
+              ? rolesConfident
+                ? "Stay Close = defense · Create Space = offense (ball possession / override)."
+                : "Who won the gap on this clip: stay attached, or create space and get away."
               : isSameTeam
                 ? "Off-ball action on this clip: spacing, pick shape, and cut timing."
                 : "Select opposite-team players for defense/offense outcome scores."}
@@ -183,13 +232,13 @@ function CoachInsights({ insights, narrative }) {
             <OutcomeHero
               label={defenderLabel}
               score={stayClose}
-              subtitle="Stay Close"
+              subtitle={rolesConfident ? "Stay Close · defense" : "Stay Close"}
               tone={scoreTone(stayClose)}
             />
             <OutcomeHero
               label={attackerLabel}
               score={createSpace}
-              subtitle="Create Space"
+              subtitle={rolesConfident ? "Create Space · offense" : "Create Space"}
               tone={scoreTone(createSpace)}
             />
           </div>
@@ -202,6 +251,61 @@ function CoachInsights({ insights, narrative }) {
           />
         )}
       </div>
+
+      {jobId ? (
+        <div className="offense-override-row">
+          <div className="offense-override-lock">
+            <span className="offense-override-label">{lockLine}</span>
+            {offenseName ? (
+              <span className="status-text offense-override-hint">
+                {lockSource === "manual_override"
+                  ? "Locked by your Red / Blue choice"
+                  : rolesConfident
+                    ? `Locked via ${lockSource}`
+                    : "Roles pending — override below if Auto is wrong"}
+              </span>
+            ) : null}
+          </div>
+          <div className="offense-override-buttons">
+            <button
+              type="button"
+              className={`secondary-button offense-team-red${
+                lockSource === "manual_override" && offenseTeamId === 0 ? " is-active" : ""
+              }`}
+              disabled={overrideBusy}
+              onClick={() => setOffenseTeam("manual", 0)}
+            >
+              Team Red on offense
+            </button>
+            <button
+              type="button"
+              className={`secondary-button offense-team-blue${
+                lockSource === "manual_override" && offenseTeamId === 1 ? " is-active" : ""
+              }`}
+              disabled={overrideBusy}
+              onClick={() => setOffenseTeam("manual", 1)}
+            >
+              Team Blue on offense
+            </button>
+            <button
+              type="button"
+              className={`secondary-button${
+                lockSource !== "manual_override" ? " is-active" : ""
+              }`}
+              disabled={overrideBusy}
+              onClick={() => setOffenseTeam("auto")}
+            >
+              Auto
+            </button>
+          </div>
+          <span className="status-text offense-override-hint">
+            Click Red or Blue to force correct stats when Auto is unsure.
+          </span>
+          {overrideError ? (
+            <p className="tracking-warning">{overrideError}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="scorecard-tile-grid">
         <MetricTile

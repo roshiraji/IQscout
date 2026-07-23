@@ -57,19 +57,30 @@ jersey_teams:
 
 # Optional named identity (Resolve jersey identities). Searches each person's
 # full track for cheap OCR opportunities, then OCR's only top-N diverse frames.
+# auto_resolve_enabled=false keeps OCR manual from the dashboard Resolve button.
 identity:
+  auto_resolve_enabled: false
   jersey_ocr:
-    max_candidates_per_person: 48
-    min_spacing_frames: 3
+    max_candidates_per_person: 5
+    min_spacing_frames: 15
     min_agreeing_reads: 2
     min_consistency: 0.60
-    min_read_confidence: 0.50
+    min_read_confidence: 0.55
+    max_consecutive_frame_failures: 3
+    max_processed_frames: 5
+    max_ocr_calls_per_person: 8
+    use_angle_cls: false
+    save_debug_crops: false
     min_bbox_height: 100
     min_bbox_width: 45
     min_crop_height: 70
     min_crop_width: 35
     min_sharpness: 25
     min_contrast: 18
+  face_embeddings:
+    enabled: false
+  reid_embeddings:
+    enabled: false
 
 # Full-clip quality gates (detector vs tracker continuity).
 quality:
@@ -77,3 +88,138 @@ quality:
   min_mean_detection_confidence: 0.50
   max_short_track_ratio: 0.35
   max_track_gap_frames: 30
+
+# Dedicated basketball detector (separate from player seg weights).
+# Soft-fails to HSV orange proposals when weights are missing.
+ball:
+  enabled: true
+  weights: outputs/training_loop_ball/best_ball_det.pt
+  conf: 0.25
+  device: "cpu"          # use "0" when CUDA available and ball train done
+  every_n_frames: 2      # raise to 2–3 on CPU if Analyze is too slow
+  hsv_fallback: true
+  track:
+    iou_threshold: 0.15
+    max_missed: 12
+    interpolate:         # WS1: fill short ball gaps between real detections
+      enabled: true
+      max_gap: 5
+      min_conf: 0.2
+  hoop:                  # WS3: attacking-direction anchor
+    enabled: true
+    weights: outputs/training_loop_hoop_ref/best_hoop_ref_seg.pt
+    conf: 0.40           # precision/recall balance (0.80+ is too sparse)
+    every_n_frames: 15
+  possession:
+    max_dist_norm: 0.12
+    min_held_fraction: 0.12
+    min_confidence: 0.45
+    min_window_frames: 8   # WS4: possession windows
+    margin: 0.12           # WS2: winning team must beat runner-up by this
+    fusion_weights:        # WS2: signal weights (sum ~1.0)
+      possession: 0.55
+      direction: 0.25
+      spread: 0.08
+      continuity: 0.12
+
+# Focused-player isolate preview (background job after Confirm).
+# mode: hybrid   = temporal neighbor fill, then LaMa on leftovers (best default)
+#       ai       = LaMa only on full erase mask
+#       temporal = neighbor fill + OpenCV inpaint (CPU-friendly)
+isolate:
+  mode: temporal             # hybrid | ai | temporal — falls back to temporal if GPU/pkg missing
+  ai_backend: lama         # lama (propainter reserved)
+  erase_dilate: 13         # stronger non-selected fringe removal
+  keep_dilate: 7           # protect selected player pixels under overlap
+  bbox_expand: 0.12        # expand erase bbox to catch shoes/arms
+  fallback_to_temporal: true
+  lama_leftover_min_pixels: 64
+  min_temporal_samples: 2  # ignore weak 1-neighbor fills (they look smeary)
+  lama_full_erase: true    # LaMa repaints whole hole — kills stuck blur
+  hard_composite: true     # no soft-blend of removed players back in
+  # Fast path on local GPU (RTX 3070 8GB): crop erase region + downscale for LaMa.
+  ai_working_side: 768     # set null or "full" for max quality / slower
+  crop_pad: 48
+  orb_features: 700        # temporal align cost on CPU
+  # ai_max_side: 1024      # optional hard tile cap; omit = VRAM probe + cache
+
+# Analytics layers (trajectories / segments / events). Thresholds only —
+# generation reuses existing job tracking outputs (no YOLO re-run).
+analytics:
+  trajectories:
+    max_gap_frames: 15           # break path fragments across longer missing-frame gaps
+  heatmap_density:
+    bins_x: 48                   # horizontal bins in normalized screen space
+    bins_y: 27                   # vertical bins (~16:9)
+  # Screen-space movement events (Phase 10). Speeds are norm-units/second.
+  movement_events:
+    stationary_speed_max: 0.015  # below → stationary
+    moving_speed_min: 0.040      # above → moving
+    state_persist_points: 5      # consecutive samples to confirm state change
+    accel_delta_min: 0.28        # rapid_acceleration speed jump
+    accel_window_points: 4
+    accel_cooldown_frames: 20
+    turn_angle_deg_min: 70.0     # sharp_direction_change
+    turn_min_speed: 0.05
+    turn_cooldown_frames: 20
+    converge_distance_max: 0.08  # players_converged current distance
+    converge_prior_min: 0.14     # must have been farther before
+    separate_distance_min: 0.18  # players_separated current distance
+    separate_prior_max: 0.10     # must have been closer before
+    pair_event_cooldown_frames: 20
+    max_events_per_type_per_player: 12
+  # Screen-space defensive proximity events (Phase 11). Distances are norm units.
+  # Language is possible/likely only — not official defensive stats.
+  defense_events:
+    pressure_distance_max: 0.08       # opp closer than this → pressure candidate
+    pressure_clear_distance: 0.12     # above this → pressure may end
+    pressure_persist_frames: 5        # consecutive frames to confirm pressure start
+    clear_persist_frames: 5           # consecutive frames to confirm pressure end
+    separation_distance_min: 0.18     # after close, distance above this → separation
+    separation_prior_max: 0.10        # must have been this close before separating
+    double_team_distance_max: 0.10    # ≥2 opp within this of one player
+    double_team_persist_frames: 4
+    help_defense_distance_max: 0.12   # second defender near already-pressured player
+    help_defense_persist_frames: 3
+    matchup_persist_frames: 5         # new nearest-opp must persist
+    matchup_cooldown_frames: 30
+    event_cooldown_frames: 20
+    max_events_per_type_per_player: 12
+  # Probable ball events (Phase 12). Soft-skip if ball_tracks missing.
+  # Never claims made/missed — screen-space proximity / motion only.
+  ball_events:
+    near_player_distance_max: 0.10
+    near_player_persist_frames: 3
+    near_player_cooldown_frames: 25
+    possession_change_persist_frames: 5
+    possession_change_cooldown_frames: 20
+    toward_hoop_min_progress: 0.04      # reduction in ball→hoop norm distance
+    toward_hoop_window_frames: 8
+    toward_hoop_cooldown_frames: 25
+    shot_hoop_distance_max: 0.18
+    shot_toward_progress_min: 0.03
+    shot_not_held_distance_min: 0.08    # ball not glued to a player
+    shot_cooldown_frames: 40
+    max_events_per_type: 40
+    analytics_safe_only: true
+  segments:
+    hoop_left_max: 0.35          # hoop_x_normalized below → left
+    hoop_right_min: 0.65         # hoop_x_normalized above → right
+    hoop_side_window: 8          # analyzed hoop frames in persistence window
+    hoop_side_min_votes: 5       # votes required inside window to flip side
+    transition_pad_frames: 2     # frames around hard cuts marked transition
+    track_loss_ratio: 0.45       # active-track drop vs previous frame
+    track_loss_min_prev: 4       # only fire track-loss if previous count >= this
+    bbox_scale_ratio: 2.5        # median bbox area jump/drop vs previous
+    probe_video: false           # optional pixel probe (quality.cut_frames usually enough)
+    pixel_cut_score: 45.0        # mean-abs grayscale probe threshold (matches tracking)
+    pixel_probe_width: 64
+    pixel_probe_height: 36
+    # Closeup classification (Phase 4) — all closeup segments are unusable.
+    closeup_max_players: 2           # visible player count threshold
+    closeup_min_area_ratio: 0.20     # largest bbox area / frame area
+    closeup_track_drop_ratio: 0.45   # sharp active-track collapse vs previous
+    closeup_track_drop_min_prev: 4   # only count drop if previous count >= this
+    closeup_feet_max_y_norm: 0.88    # large box ending above this → feet likely missing
+    closeup_persist_window: 5        # frames in persistence window
+    closeup_persist_min_votes: 3     # candidate votes required before confirming closeup

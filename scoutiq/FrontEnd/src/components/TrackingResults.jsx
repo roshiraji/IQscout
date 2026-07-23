@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import CoachInsights from "./CoachInsights";
 
 function formatEta(seconds) {
@@ -11,11 +11,28 @@ function formatEta(seconds) {
 function TrackingResults({
   tracking,
   videoUrl,
+  masksVideoUrl,
   isolatedVideoUrl,
   isolateStatus,
   onNewSelection,
+  jobId,
+  onPossessionUpdated,
+  seekTime = null,
+  seekNonce = 0,
 }) {
-  const [previewMode, setPreviewMode] = useState("full"); // "full" | "isolate"
+  const [previewMode, setPreviewMode] = useState("full"); // "full" | "masks" | "isolate"
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || seekTime == null || !Number.isFinite(Number(seekTime))) return;
+    try {
+      el.currentTime = Math.max(0, Number(seekTime));
+    } catch {
+      // Ignore seek before metadata.
+    }
+  }, [seekTime, seekNonce]);
+
 
   if (!tracking) {
     return null;
@@ -34,13 +51,26 @@ function TrackingResults({
     ?? tracking.quality?.unique_person_groups;
   const isolationAvailable =
     Boolean(isolatedVideoUrl) && tracking.isolation_available !== false;
+  const masksAvailable = Boolean(masksVideoUrl);
   const isolateBusy = ["queued", "processing"].includes(isolateStatus?.status);
   const isolateProgress = Math.round((isolateStatus?.progress || 0) * 100);
+  const isolationMode =
+    isolateStatus?.effective_mode || tracking?.isolation_mode || "temporal";
+  const isolateBaseLabel =
+    isolationMode === "hybrid"
+      ? "Clean Isolate (hybrid)"
+      : isolationMode === "ai"
+        ? "Clean Isolate (AI)"
+        : "Isolate";
   const isolateButtonLabel = isolateBusy
-    ? `Isolate · ${isolateProgress > 0 ? `${isolateProgress}%` : formatEta(isolateStatus?.eta_seconds)}`
-    : "Isolate";
+    ? `${isolateBaseLabel} · ${isolateProgress > 0 ? `${isolateProgress}%` : formatEta(isolateStatus?.eta_seconds)}`
+    : isolateBaseLabel;
   const activeVideoUrl =
-    previewMode === "isolate" && isolationAvailable ? isolatedVideoUrl : videoUrl;
+    previewMode === "isolate" && isolationAvailable
+      ? isolatedVideoUrl
+      : previewMode === "masks" && masksAvailable
+        ? masksVideoUrl
+        : videoUrl;
 
   return (
     <>
@@ -136,6 +166,19 @@ function TrackingResults({
               </button>
               <button
                 type="button"
+                className={`view-toggle-btn ${previewMode === "masks" ? "view-toggle-btn-active" : ""}`}
+                onClick={() => masksAvailable && setPreviewMode("masks")}
+                disabled={!masksAvailable}
+                title={
+                  masksAvailable
+                    ? "Jersey-colored segmentation only — no boxes or labels"
+                    : "Masks preview not ready yet — Confirm again after updating the API"
+                }
+              >
+                Segmentation only
+              </button>
+              <button
+                type="button"
                 className={`view-toggle-btn ${previewMode === "isolate" ? "view-toggle-btn-active" : ""}`}
                 onClick={() => isolationAvailable && setPreviewMode("isolate")}
                 disabled={!isolationAvailable}
@@ -160,10 +203,18 @@ function TrackingResults({
                   aria-label="Isolate processing progress"
                 />
                 <span>
-                  Building cleaner background · {isolateProgress}% ·{" "}
+                  {isolateBaseLabel} · {isolateProgress}% ·{" "}
                   {formatEta(isolateStatus?.eta_seconds)} remaining
+                  {isolateStatus?.stage
+                    ? ` · ${String(isolateStatus.stage).replace(/_/g, " ")}`
+                    : ""}
                 </span>
               </div>
+            )}
+            {tracking?.isolation_ai_fallback && (
+              <p className="status-text">
+                AI isolate unavailable (GPU/LaMa) — temporal fallback was used.
+              </p>
             )}
             {isolateStatus?.status === "failed" && (
               <p className="tracking-warning">
@@ -171,12 +222,13 @@ function TrackingResults({
               </p>
             )}
             <p className="status-text">
-              Isolate removes non-selected players so the court, hoop, and crowd
-              stay in view. It aligns nearby clean frames in the background to
-              reduce smears and translucent blobs.
+              Full scene shows masks + boxes + labels. Segmentation only keeps
+              jersey-colored masks. Isolate removes non-selected players so the
+              court, hoop, and crowd stay in view.
             </p>
             <video
               key={activeVideoUrl}
+              ref={videoRef}
               controls
               width="100%"
               preload="metadata"
@@ -197,6 +249,8 @@ function TrackingResults({
       <CoachInsights
         insights={tracking.coach_insights}
         narrative={tracking.coach_narrative}
+        jobId={jobId}
+        onPossessionUpdated={onPossessionUpdated}
       />
     </>
   );

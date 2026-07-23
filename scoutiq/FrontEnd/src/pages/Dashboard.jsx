@@ -1,16 +1,22 @@
 import { useEffect, useState } from "react";
 
 import VideoUpload from "../components/VideoUpload";
-
-import HeatmapViewer from "../components/HeatmapViewer";
-
+import TrajectoryViewer from "../components/TrajectoryViewer";
 import ProcessingStatus from "../components/ProcessingStatus";
-
 import ProcessingVideoPlayer from "../components/ProcessingVideoPlayer_1";
-
 import PlayerSnapshotSelector from "../components/PlayerSnapshotSelector";
 import TrackingResults from "../components/TrackingResults";
+import ConfirmProgress from "../components/ConfirmProgress";
+import IngestProgress from "../components/IngestProgress";
 import EventTable from "../components/EventTable";
+import {
+  analyzeVideo,
+  getJob,
+  getConfirmStatus,
+  getIsolateStatus,
+  saveTrackingSelection,
+  jobFileUrl,
+} from "../API/scoutiqAPI";
 
 
 
@@ -33,13 +39,14 @@ function Dashboard() {
 
   const [videoUrl, setVideoUrl] = useState("");
 
-  const [heatmapUrl, setHeatmapUrl] = useState("");
-
   const [tracking, setTracking] = useState(null);
 
   const [trackingVideoUrl, setTrackingVideoUrl] = useState("");
+  const [trackingMasksVideoUrl, setTrackingMasksVideoUrl] = useState("");
   const [trackingIsolatedVideoUrl, setTrackingIsolatedVideoUrl] = useState("");
   const [isolateStatus, setIsolateStatus] = useState(null);
+  const [confirmStatus, setConfirmStatus] = useState(null);
+  const [ingestPhase, setIngestPhase] = useState(null);
 
   const [error, setError] = useState("");
 
@@ -54,6 +61,10 @@ function Dashboard() {
     away_team: "",
   });
 
+  const [seekTime, setSeekTime] = useState(null);
+  const [seekNonce, setSeekNonce] = useState(0);
+  const [focusEvent, setFocusEvent] = useState(null);
+  const [timelineRefreshKey, setTimelineRefreshKey] = useState(0);
 
 
   useEffect(() => {
@@ -64,23 +75,15 @@ function Dashboard() {
     let cancelled = false;
     const poll = async () => {
       try {
-        const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(payload.detail || "Could not read tracking job.");
-        }
+        const payload = await getJob(jobId);
         if (cancelled) return;
         setJob(payload);
         if (payload.status === "ready" && payload.result?.snapshot) {
           setSnapshot(payload.result.snapshot);
-          setSnapshotImageUrl(
-            `/api/jobs/${encodeURIComponent(jobId)}/files/snapshot`
-          );
-          setSnapshotMasksImageUrl(
-            `/api/jobs/${encodeURIComponent(jobId)}/files/snapshot_masks`
-          );
+          setSnapshotImageUrl(jobFileUrl(jobId, "snapshot"));
+          setSnapshotMasksImageUrl(jobFileUrl(jobId, "snapshot_masks"));
         } else if (payload.status === "failed") {
-          setError(payload.error || "Full-clip tracking failed.");
+          // IngestProgress shows job.error — avoid duplicate Error panel below.
         }
       } catch (err) {
         if (!cancelled) setError(err.message || "Job polling failed.");
@@ -109,26 +112,17 @@ function Dashboard() {
     let cancelled = false;
     const poll = async () => {
       try {
-        const response = await fetch(
-          `/api/jobs/${encodeURIComponent(jobId)}/isolate-status?generation=${encodeURIComponent(generation)}`
-        );
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          if (!cancelled) {
-            setIsolateStatus({
-              status: "failed",
-              stage: "failed",
-              error: payload.detail || "Could not read isolate progress.",
-            });
-          }
-          return;
-        }
+        const payload = await getIsolateStatus(jobId, generation);
         if (cancelled) return;
         setIsolateStatus(payload);
         if (payload.status === "ready") {
           const stamp = Date.now();
           setTrackingIsolatedVideoUrl(
-            `/api/jobs/${encodeURIComponent(jobId)}/files/focused_isolated?v=${stamp}&g=${encodeURIComponent(generation)}`
+            jobFileUrl(
+              jobId,
+              "focused_isolated",
+              `v=${stamp}&g=${encodeURIComponent(generation)}`
+            )
           );
           setTracking((current) => current ? {
             ...current,
@@ -159,11 +153,36 @@ function Dashboard() {
     isolateStatus?.status,
   ]);
 
+  // Poll Confirm progress while the selection POST is in flight (parallel requests).
+  useEffect(() => {
+    if (!jobId || !isSavingSelection) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const payload = await getConfirmStatus(jobId);
+        if (!cancelled) setConfirmStatus(payload);
+      } catch {
+        // Transient — keep polling.
+      }
+    };
+
+    poll();
+    const timer = window.setInterval(poll, 400);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [jobId, isSavingSelection]);
+
 
 
   async function handleAnalyze(file) {
 
     setIsBusy(true);
+    setIngestPhase("uploading");
 
     setSelectedFileName(file.name);
 
@@ -179,13 +198,13 @@ function Dashboard() {
 
     setVideoUrl("");
 
-    setHeatmapUrl("");
-
     setTracking(null);
 
     setTrackingVideoUrl("");
+    setTrackingMasksVideoUrl("");
     setTrackingIsolatedVideoUrl("");
     setIsolateStatus(null);
+    setConfirmStatus(null);
     setError("");
 
     setJobId("");
@@ -194,48 +213,13 @@ function Dashboard() {
 
 
 
-    const formData = new FormData();
-
-    formData.append("file", file);
-    Object.entries(gameContext).forEach(([key, value]) => {
-      if (value) formData.append(key, value);
-    });
-
-
-
     try {
-
-      const response = await fetch("/api/analyze?run_snapshot=false&run_labeling=false", {
-
-        method: "POST",
-
-        body: formData,
-
+      const payload = await analyzeVideo(file, gameContext, {
+        onUploadProgress: ({ phase }) => setIngestPhase(phase),
       });
 
-
-
-      const payload = await response.json().catch(() => ({}));
-
-
-
-      if (!response.ok) {
-
-        const detail = payload.detail;
-
-        const message = Array.isArray(detail)
-
-          ? detail.map((item) => item.msg || String(item)).join(", ")
-
-          : detail || "Analysis request failed.";
-
-        throw new Error(message);
-
-      }
-
-
-
       setValidation(payload.validation);
+      setIngestPhase(null);
 
       if (payload.job_id) {
         setJobId(payload.job_id);
@@ -254,19 +238,10 @@ function Dashboard() {
 
       }
 
-
-
-      if (payload.labeling?.heatmap_png) {
-
-        const heatmapName = payload.labeling.heatmap_png.split(/[/\\]/).pop();
-
-        setHeatmapUrl(`/api/files/heatmap/${encodeURIComponent(heatmapName)}`);
-
-      }
-
     } catch (err) {
 
       setError(err.message || "Something went wrong during analysis.");
+      setIngestPhase(null);
 
     } finally {
 
@@ -296,40 +271,24 @@ function Dashboard() {
     // keep playing a stale cached segment while the new one renders.
     setTracking(null);
     setTrackingVideoUrl("");
+    setTrackingMasksVideoUrl("");
     setTrackingIsolatedVideoUrl("");
     setIsolateStatus(null);
+    setConfirmStatus({
+      status: "processing",
+      stage: "saving_selection",
+      progress: 0.02,
+      detail: "Confirming your selected players…",
+    });
 
     try {
-
-      const response = await fetch("/api/tracking/selection", {
-
-        method: "POST",
-
-        headers: { "Content-Type": "application/json" },
-
-        body: JSON.stringify({
-
-          job_id: jobId,
-
-          selected_person_group_ids: selectedPlayers.map(
-            (player) => player.person_group_id ?? player.track_id
-          ),
-
-          selected_players: selectedPlayers,
-
-        }),
-
+      const payload = await saveTrackingSelection({
+        job_id: jobId,
+        selected_person_group_ids: selectedPlayers.map(
+          (player) => player.person_group_id ?? player.track_id
+        ),
+        selected_players: selectedPlayers,
       });
-
-
-
-      const payload = await response.json().catch(() => ({}));
-
-
-
-      if (!response.ok) {
-        throw new Error(payload.detail || "Failed to save tracking selection.");
-      }
 
       if (payload.tracking) {
         const stamp = Date.now();
@@ -339,20 +298,28 @@ function Dashboard() {
           .sort((a, b) => Number(a) - Number(b))
           .join("-");
         setTracking(payload.tracking);
-        // Cache-bust so a new Confirm replaces the previous focused preview.
         const bust = `v=${stamp}&g=${encodeURIComponent(groupKey)}`;
-        setTrackingVideoUrl(
-          `/api/jobs/${encodeURIComponent(jobId)}/files/focused?${bust}`
-        );
+        setTrackingVideoUrl(jobFileUrl(jobId, "focused", bust));
+        setTrackingMasksVideoUrl(jobFileUrl(jobId, "focused_masks", bust));
+        setConfirmStatus({
+          status: "ready",
+          stage: "ready",
+          progress: 1,
+          detail: "Focused preview ready. Isolate continues in the background.",
+        });
         setIsolateStatus({
           status: payload.tracking.isolation_status || "queued",
           stage: payload.tracking.isolation_status || "queued",
           progress: 0,
           eta_seconds: null,
+          effective_mode: payload.tracking.isolation_mode,
+          requested_mode: payload.tracking.isolation_requested_mode,
+          method: payload.tracking.isolation_method,
+          ai_fallback: payload.tracking.isolation_ai_fallback,
         });
         if (payload.tracking.isolation_available !== false) {
           setTrackingIsolatedVideoUrl(
-            `/api/jobs/${encodeURIComponent(jobId)}/files/focused_isolated?${bust}`
+            jobFileUrl(jobId, "focused_isolated", bust)
           );
         } else {
           setTrackingIsolatedVideoUrl("");
@@ -364,7 +331,13 @@ function Dashboard() {
     } catch (err) {
 
       setError(err.message || "Failed to save tracking selection.");
-
+      setConfirmStatus({
+        status: "failed",
+        stage: "failed",
+        progress: 0,
+        detail: err.message || "Failed to save tracking selection.",
+        error: err.message || "Failed to save tracking selection.",
+      });
       return null;
 
     } finally {
@@ -382,7 +355,7 @@ function Dashboard() {
     <div className="dashboard">
       <div className="hero">
         <h1>ScoutIQ</h1>
-        <p>NBA Vision Analytics Platform</p>
+        <p>WNBA Vision Analytics Platform</p>
       </div>
 
       <div className="card">
@@ -427,7 +400,13 @@ function Dashboard() {
 
       />
 
-
+      <IngestProgress
+        isBusy={isBusy}
+        ingestPhase={ingestPhase}
+        selectedFileName={selectedFileName}
+        job={job}
+        validation={validation}
+      />
 
       <ProcessingStatus
         validation={validation}
@@ -435,8 +414,8 @@ function Dashboard() {
         snapshot={snapshot}
         job={job}
         error={error}
+        hideJobProgress
       />
-
 
 
       <PlayerSnapshotSelector
@@ -447,29 +426,77 @@ function Dashboard() {
         onConfirm={handleConfirmSelection}
         isSaving={isSavingSelection}
       />
+      <ConfirmProgress
+        confirmStatus={confirmStatus}
+        isolateStatus={isolateStatus}
+        isSaving={isSavingSelection}
+      />
       <TrackingResults
         key={tracking?.isolation_generation || "no-tracking"}
         tracking={tracking}
         videoUrl={trackingVideoUrl}
+        masksVideoUrl={trackingMasksVideoUrl}
         isolatedVideoUrl={trackingIsolatedVideoUrl}
         isolateStatus={isolateStatus}
+        jobId={jobId}
+        seekTime={seekTime}
+        seekNonce={seekNonce}
+        onPossessionUpdated={(payload) => {
+          if (!payload?.coach_insights) return;
+          setTracking((current) =>
+            current
+              ? {
+                  ...current,
+                  coach_insights: payload.coach_insights,
+                  coach_narrative:
+                    payload.coach_narrative || current.coach_narrative,
+                  possession: payload.possession || current.possession,
+                  offense_team_id: payload.possession?.offense_team_id,
+                  defense_team_id: payload.possession?.defense_team_id,
+                }
+              : current
+          );
+        }}
         onNewSelection={() => {
           setTracking(null);
           setTrackingVideoUrl("");
+          setTrackingMasksVideoUrl("");
           setTrackingIsolatedVideoUrl("");
           setIsolateStatus(null);
+          setConfirmStatus(null);
           setError("");
         }}
       />
 
       <div className="card video-panel">
         <h2>Game Events</h2>
-        <EventTable />
+        <EventTable
+          jobId={jobId}
+          enabled={Boolean(jobId && job?.status === "ready")}
+          refreshKey={timelineRefreshKey}
+          onEventSelect={(event) => {
+            const t = Number(event?.start_time);
+            if (Number.isFinite(t)) {
+              setSeekTime(t);
+              setSeekNonce((n) => n + 1);
+            }
+            setFocusEvent(event);
+          }}
+        />
       </div>
 
-      <ProcessingVideoPlayer videoUrl={videoUrl} />
+      <ProcessingVideoPlayer
+        videoUrl={videoUrl}
+        seekTime={seekTime}
+        seekNonce={seekNonce}
+      />
 
-      <HeatmapViewer imageUrl={heatmapUrl} />
+      <TrajectoryViewer
+        jobId={jobId}
+        enabled={Boolean(jobId && job?.status === "ready")}
+        focusEvent={focusEvent}
+        onGenerateComplete={() => setTimelineRefreshKey((k) => k + 1)}
+      />
 
 
 

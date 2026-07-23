@@ -501,10 +501,12 @@ def compute_pairwise_metrics(
     meta_b: dict[str, Any] | None,
     source_frame_count: int,
     frame_diagonal: float,
+    possession: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pairwise separation, closeouts, chase / sticky / screen / cut alignment."""
     meta_a = meta_a or {}
     meta_b = meta_b or {}
+    possession = possession or {}
     diag = max(frame_diagonal, 1.0)
     src = max(int(source_frame_count), 1)
     aligned = _align_pair(series_a, series_b)
@@ -685,7 +687,37 @@ def compute_pairwise_metrics(
     label_b = _label_for(gid_b, meta_b)
     defender_label = label_a
     attacker_label = label_b
-    if opp_team or relationship == "unknown":
+    role_source = "geometry_proxy"
+    offense_team_id = possession.get("offense_team_id")
+    defense_team_id = possession.get("defense_team_id")
+    roles_confident = (
+        offense_team_id is not None
+        and str(possession.get("source") or "")
+        in {"ball_possession", "fused_windows", "manual_override"}
+        and float(possession.get("confidence") or 0.0) >= 0.45
+    ) or str(possession.get("source") or "") == "manual_override"
+
+    if roles_confident and opp_team:
+        team_a = meta_a.get("team_id")
+        team_b = meta_b.get("team_id")
+        try:
+            team_a = int(team_a) if team_a is not None else None
+            team_b = int(team_b) if team_b is not None else None
+            offense_team_id = int(offense_team_id)
+            if defense_team_id is not None:
+                defense_team_id = int(defense_team_id)
+        except (TypeError, ValueError):
+            team_a = team_b = None
+        if team_a is not None and team_b is not None and team_a != team_b:
+            if team_a == offense_team_id:
+                attacker_label = label_a
+                defender_label = label_b
+                role_source = str(possession.get("source") or "ball_possession")
+            elif team_b == offense_team_id:
+                attacker_label = label_b
+                defender_label = label_a
+                role_source = str(possession.get("source") or "ball_possession")
+    elif opp_team or relationship == "unknown":
         if chase.get("chaser_person_group_id") == gid_a:
             defender_label = label_a
             attacker_label = label_b
@@ -710,6 +742,19 @@ def compute_pairwise_metrics(
         label_a=label_a,
         label_b=label_b,
     )
+    scorecard["role_source"] = role_source
+    scorecard["roles_confident"] = bool(roles_confident and role_source != "geometry_proxy")
+    scorecard["offense_team_id"] = offense_team_id if roles_confident else None
+    scorecard["defense_team_id"] = defense_team_id if roles_confident else None
+    if not scorecard["roles_confident"]:
+        scorecard["role_note"] = (
+            "Offense/defense roles use geometry proxies until ball possession "
+            "is confident — or set offense team manually."
+        )
+    else:
+        scorecard["role_note"] = (
+            f"Roles from {role_source}: Create Space = offense, Stay Close = defense."
+        )
 
     return {
         "person_group_ids": [gid_a, gid_b],
@@ -769,6 +814,12 @@ def compute_pairwise_metrics(
             "frames_both_high_effort": len(inter),
         },
         "matchup_scorecard": scorecard,
+        "possession_roles": {
+            "offense_team_id": scorecard.get("offense_team_id"),
+            "defense_team_id": scorecard.get("defense_team_id"),
+            "role_source": scorecard.get("role_source"),
+            "roles_confident": scorecard.get("roles_confident"),
+        },
     }
 
 
@@ -805,16 +856,28 @@ def build_coach_narrative(insights: dict[str, Any]) -> str:
         create = scorecard.get("create_space_score")
         def_lab = scorecard.get("defender_label") or "Stay-close side"
         att_lab = scorecard.get("attacker_label") or "Create-space side"
+        roles_confident = bool(scorecard.get("roles_confident"))
         if stay is not None and create is not None:
-            parts = [
-                f"{def_lab} earned Stay Close {round(float(stay) * 100)}/100 - "
-                f"attached for {near_pct}% of contested time with {close_n} "
-                f"closeout burst(s).",
-                f"{att_lab} earned Create Space {round(float(create) * 100)}/100 - "
-                f"separated for {open_pct}% of contested time with {sep_n} "
-                f"get-away burst(s).",
-            ]
-        if stay is not None and create is not None:
+            if roles_confident:
+                parts = [
+                    f"{def_lab} (defense) Stay Close {round(float(stay) * 100)}/100 - "
+                    f"attached for {near_pct}% of contested time with {close_n} "
+                    f"closeout burst(s).",
+                    f"{att_lab} (offense) Create Space {round(float(create) * 100)}/100 - "
+                    f"separated for {open_pct}% of contested time with {sep_n} "
+                    f"get-away burst(s).",
+                ]
+            else:
+                parts = [
+                    f"{def_lab} earned Stay Close {round(float(stay) * 100)}/100 - "
+                    f"attached for {near_pct}% of contested time with {close_n} "
+                    f"closeout burst(s).",
+                    f"{att_lab} earned Create Space {round(float(create) * 100)}/100 - "
+                    f"separated for {open_pct}% of contested time with {sep_n} "
+                    f"get-away burst(s).",
+                    "Offense/defense not locked — set offense team or wait for ball possession.",
+                ]
+        if stay is not None and create is not None and roles_confident:
             if float(stay) >= float(create) + 0.08:
                 parts.append(
                     "Edge: defense held the matchup tighter on this clip."
@@ -825,6 +888,8 @@ def build_coach_narrative(insights: dict[str, Any]) -> str:
                 )
             else:
                 parts.append("Edge: contested — neither side clearly won the gap.")
+        elif stay is not None and create is not None:
+            parts.append("Edge: contested — roles use geometry until possession is confident.")
     elif rel == "same_team":
         screen = primary.get("screen_shape_proxy") or {}
         label = (screen.get("soft_label") or "no_clear_screen_shape").replace(
@@ -957,10 +1022,12 @@ def compute_coach_insights(
     label_by_group: dict[int, str] | None = None,
     team_meta_by_group: dict[int, dict] | None = None,
     primary_pair: tuple[int, int] | None = None,
+    possession: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build full coach_insights payload from selected track rows."""
     label_by_group = label_by_group or {}
     team_meta_by_group = team_meta_by_group or {}
+    possession = possession or {}
     series_map = build_series_by_group(rows)
     gids = sorted(series_map)
     diag = _frame_diagonal(frame_width, frame_height)
@@ -998,6 +1065,7 @@ def compute_coach_insights(
                 meta_b=mb,
                 source_frame_count=source_frame_count,
                 frame_diagonal=diag,
+                possession=possession,
             )
         )
 
@@ -1036,7 +1104,6 @@ def compute_coach_insights(
             ),
         },
         "non_goals": [
-            "ball_tracking",
             "shot_make_miss",
             "named_identity",
             "calibrated_feet_per_second",
@@ -1050,6 +1117,15 @@ def compute_coach_insights(
         "players": players,
         "pairs": pairs,
         "pair_distance_series": pair_distance_series,
+        "possession": {
+            "offense_team_id": possession.get("offense_team_id"),
+            "defense_team_id": possession.get("defense_team_id"),
+            "source": possession.get("source"),
+            "confidence": possession.get("confidence"),
+            "held_fraction": possession.get("held_fraction"),
+            "n_windows": possession.get("n_windows"),
+            "windows": possession.get("windows"),
+        },
         "glance": {},
     }
 
@@ -1099,6 +1175,10 @@ def compute_coach_insights(
             "defender_label": scorecard.get("defender_label"),
             "attacker_label": scorecard.get("attacker_label"),
             "relationship": primary.get("relationship"),
+            "roles_confident": scorecard.get("roles_confident"),
+            "role_source": scorecard.get("role_source"),
+            "offense_team_id": scorecard.get("offense_team_id"),
+            "defense_team_id": scorecard.get("defense_team_id"),
             "players": glance_players,
             "pair_person_group_ids": primary.get("person_group_ids"),
         }

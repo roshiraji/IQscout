@@ -1,0 +1,22 @@
+# Hoop/rim detect training — separate from ball + player weights.
+# Run from scoutiq/:
+#   ..\.venv\Scripts\python.exe -m src.ball hoop-train --config configs/showcase_hoop_train.yaml
+
+dataset:
+  data_yaml: data/datasets/wnba_hoop_det/data.yaml
+
+output:
+  runs_root: outputs/training_loop_hoop
+  weights_name: best_hoop_det.pt
+
+training:
+  model: yolo11n.pt
+  epochs: 60
+  max_rounds: 1
+  imgsz: 960
+  batch: 12          # was 8; drop to 8 if CUDA OOM on 8GB cards
+  workers: 2
+  device: 0
+
+targets:
+  min_box_map50: 0.40

@@ -21,3 +21,4 @@ sportsdataverse
 rapidfuzz
 qdrant-client
 PyYAML
+simple-lama-inpainting

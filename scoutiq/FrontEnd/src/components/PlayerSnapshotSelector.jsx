@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  getIdentity,
+  resolveIdentity,
+  setManualJersey,
+} from "../API/scoutiqAPI";
 
 function selectionKey(player) {
   return player?.person_group_id ?? player?.track_id;
@@ -85,11 +90,7 @@ function PlayerSnapshotSelector({
     let cancelled = false;
     async function loadIdentity() {
       try {
-        const response = await fetch(`/api/identity/${encodeURIComponent(jobId)}`);
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          return;
-        }
+        const payload = await getIdentity(jobId);
         if (cancelled) return;
         const next = {};
         for (const item of payload.identities || []) {
@@ -160,18 +161,10 @@ function PlayerSnapshotSelector({
     setManualResolvingTrack(trackId);
     setIdentityMessage("");
     try {
-      const response = await fetch(
-        `/api/identity/${encodeURIComponent(jobId)}/manual-jersey`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ track_id: trackId, jersey_number: jersey }),
-        }
-      );
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.detail || "Manual jersey resolution failed.");
-      }
+      const payload = await setManualJersey(jobId, {
+        track_id: trackId,
+        jersey_number: jersey,
+      });
       const next = {};
       for (const item of payload.identity?.identities || []) {
         next[item.track_id] = item;
@@ -190,14 +183,7 @@ function PlayerSnapshotSelector({
     setIsResolvingIdentity(true);
     setIdentityMessage("");
     try {
-      const response = await fetch(
-        `/api/identity/${encodeURIComponent(jobId)}/resolve`,
-        { method: "POST" }
-      );
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.detail || "Identity resolution failed.");
-      }
+      const payload = await resolveIdentity(jobId, {});
       const next = {};
       for (const item of payload.identity?.identities || []) {
         next[item.track_id] = item;
@@ -483,12 +469,19 @@ function PlayerSnapshotSelector({
           disabled={isSaving || selectedPlayers.length < 2}
         >
           {isSaving
-            ? "Tracking players…"
+            ? "Building preview…"
             : selectedPlayers.length < 2
               ? "Select at least 2 players for coach insights"
               : `Confirm ${selectedPlayers.length} player(s) to track`}
         </button>
       </div>
+
+      {isSaving && (
+        <p className="status-text" role="status">
+          Building focused + segmentation videos and Matchup Outcomes — see the
+          progress card below. No model re-run; this reuses the Analyze tracks.
+        </p>
+      )}
 
       {identityMessage && <p className="snapshot-save-message">{identityMessage}</p>}
       {saveMessage && <p className="snapshot-save-message">{saveMessage}</p>}
