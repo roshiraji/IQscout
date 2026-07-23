@@ -51,6 +51,13 @@ from src.pipeline.atomic_json import write_json_atomic  # noqa: E402
 from src.pipeline.player_track_pipeline import run_player_seg_tracking  # noqa: E402
 from src.pipeline.job_manager import get_job_manager  # noqa: E402
 from src.pipeline.resolve_job_identity import resolve_job_identity, resolve_manual_jersey  # noqa: E402
+from src.analytics.service import (  # noqa: E402
+    AnalyticsServiceError,
+    generate_analytics_for_job,
+    get_segments_for_job,
+    get_timeline_for_job,
+    get_trajectories_for_job,
+)
 
 INPUT_DIR = PROJECT_ROOT / "data" / "input_videos"
 REPORTS_DIR = PROJECT_ROOT / "outputs" / "intake_reports"
@@ -488,6 +495,67 @@ def get_job_possession(job_id: str) -> dict:
         except (OSError, json.JSONDecodeError):
             override = None
     return {"job_id": job_id, "possession": data, "override": override}
+
+
+def _analytics_job_dir(job_id: str) -> Path:
+    safe_id = Path(job_id).name
+    return get_job_manager().artifact_dir(safe_id)
+
+
+def _raise_analytics_http(exc: AnalyticsServiceError) -> None:
+    raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@app.post("/api/jobs/{job_id}/analytics/trajectories/generate")
+def generate_job_analytics_trajectories(job_id: str) -> dict:
+    """Build segments + trajectories from existing tracking output (no YOLO re-run)."""
+    job_dir = _analytics_job_dir(job_id)
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    try:
+        return generate_analytics_for_job(job_dir)
+    except AnalyticsServiceError as exc:
+        _raise_analytics_http(exc)
+        raise  # pragma: no cover
+
+
+@app.get("/api/jobs/{job_id}/analytics/trajectories")
+def get_job_analytics_trajectories(job_id: str, variant: str = "analytics") -> dict:
+    """Return generated trajectories (``variant=analytics`` or ``raw``)."""
+    job_dir = _analytics_job_dir(job_id)
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    try:
+        return get_trajectories_for_job(job_dir, variant=variant)
+    except AnalyticsServiceError as exc:
+        _raise_analytics_http(exc)
+        raise  # pragma: no cover
+
+
+@app.get("/api/jobs/{job_id}/analytics/segments")
+def get_job_analytics_segments(job_id: str) -> dict:
+    """Return gameplay camera segments for a job."""
+    job_dir = _analytics_job_dir(job_id)
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    try:
+        return get_segments_for_job(job_dir)
+    except AnalyticsServiceError as exc:
+        _raise_analytics_http(exc)
+        raise  # pragma: no cover
+
+
+@app.get("/api/jobs/{job_id}/analytics/timeline")
+def get_job_analytics_timeline(job_id: str) -> dict:
+    """Return camera/tracking game timeline events for a job."""
+    job_dir = _analytics_job_dir(job_id)
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    try:
+        return get_timeline_for_job(job_dir)
+    except AnalyticsServiceError as exc:
+        _raise_analytics_http(exc)
+        raise  # pragma: no cover
 
 
 @app.post("/api/jobs/{job_id}/offense-team")

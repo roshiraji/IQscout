@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import CoachInsights from "./CoachInsights";
 
 function formatEta(seconds) {
@@ -17,8 +17,22 @@ function TrackingResults({
   onNewSelection,
   jobId,
   onPossessionUpdated,
+  seekTime = null,
+  seekNonce = 0,
 }) {
   const [previewMode, setPreviewMode] = useState("full"); // "full" | "masks" | "isolate"
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || seekTime == null || !Number.isFinite(Number(seekTime))) return;
+    try {
+      el.currentTime = Math.max(0, Number(seekTime));
+    } catch {
+      // Ignore seek before metadata.
+    }
+  }, [seekTime, seekNonce]);
+
 
   if (!tracking) {
     return null;
@@ -214,6 +228,7 @@ function TrackingResults({
             </p>
             <video
               key={activeVideoUrl}
+              ref={videoRef}
               controls
               width="100%"
               preload="metadata"

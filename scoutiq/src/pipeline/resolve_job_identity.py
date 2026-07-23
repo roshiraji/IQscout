@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
+import time
 from pathlib import Path
 
 from src.crops.build_tracklet_crops import build_tracklet_crops
@@ -15,16 +17,100 @@ from src.reid.embed_tracklets import embed_tracklets as embed_reid
 from src.resolver.resolve_game import _jersey_numbers_match, resolve_game
 from src.resolver.team_normalizer import roster_team_from_jersey_color
 
+logger = logging.getLogger(__name__)
+
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _jersey_ocr_config(config: dict | None = None) -> dict:
-    """Load identity.jersey_ocr settings from player_tracking_mvp.yaml."""
+def _identity_config(config: dict | None = None) -> dict:
+    """Load identity settings from player_tracking_mvp.yaml."""
     cfg = config if config is not None else load_pipeline_config()
     identity = cfg.get("identity") or {}
-    return dict(identity.get("jersey_ocr") or {})
+    return {
+        "auto_resolve_enabled": bool(identity.get("auto_resolve_enabled", False)),
+        "jersey_ocr": dict(identity.get("jersey_ocr") or {}),
+        "face_embeddings": dict(identity.get("face_embeddings") or {}),
+        "reid_embeddings": dict(identity.get("reid_embeddings") or {}),
+    }
+
+
+def _jersey_ocr_config(config: dict | None = None) -> dict:
+    return _identity_config(config)["jersey_ocr"]
+
+
+def is_auto_identity_resolve_enabled(config: dict | None = None) -> bool:
+    """Whether the pipeline should launch OCR automatically after tracking."""
+    return _identity_config(config)["auto_resolve_enabled"]
+
+
+def _write_skipped_embeddings(
+    manifest_path: Path,
+    output_path: Path,
+    *,
+    field_name: str,
+    backend: str,
+) -> dict:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows = [
+        {"track_id": int(track["track_id"]), field_name: []}
+        for track in manifest
+    ]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps({"backend": backend, "tracklets": rows}, indent=2),
+        encoding="utf-8",
+    )
+    return {
+        "backend": backend,
+        "tracklets": len(rows),
+        "output": str(output_path.resolve()),
+        "skipped": True,
+    }
+
+
+def _log_identity_timing_summary(
+    *,
+    job_id: str,
+    per_track: list[dict],
+    stage_seconds: dict[str, float],
+) -> None:
+    total = stage_seconds.get("total", 0.0)
+    logger.info("Identity pipeline timing summary (job=%s)", job_id)
+    logger.info(
+        "Candidate selection: %.2fs\n"
+        "PaddleOCR initialization: %.2fs\n"
+        "OCR (all players): %.2fs\n"
+        "Face embeddings: %.2fs\n"
+        "ReID embeddings: %.2fs\n"
+        "Final identity resolution: %.2fs\n"
+        "Total identity pipeline: %.2fs",
+        stage_seconds.get("candidate_selection", 0.0),
+        stage_seconds.get("ocr_init", 0.0),
+        stage_seconds.get("ocr_total", 0.0),
+        stage_seconds.get("face_embeddings", 0.0),
+        stage_seconds.get("reid_embeddings", 0.0),
+        stage_seconds.get("final_resolution", 0.0),
+        total,
+    )
+    for row in per_track:
+        logger.info(
+            "Player %s\n"
+            "---------\n"
+            "Candidate selection: %.2fs\n"
+            "OCR: %.2fs (%d calls)\n"
+            "Face embeddings: %.2fs\n"
+            "ReID embeddings: %.2fs\n"
+            "Total: %.2fs",
+            row["track_id"],
+            row.get("candidate_selection_seconds", 0.0),
+            row.get("ocr_seconds", 0.0),
+            row.get("ocr_calls", 0),
+            row.get("face_seconds", 0.0),
+            row.get("reid_seconds", 0.0),
+            row.get("total_seconds", 0.0),
+        )
 
 
 def _official_group_ids(artifact_dir: Path) -> set[int]:
@@ -244,34 +330,82 @@ def resolve_job_identity(
         ingest_rosters(season, roster_jsonl)
 
     jersey_ocr = _jersey_ocr_config()
+    identity_cfg = _identity_config()
+    face_cfg = identity_cfg["face_embeddings"]
+    reid_cfg = identity_cfg["reid_embeddings"]
+    face_enabled = bool(face_cfg.get("enabled", False))
+    reid_enabled = bool(reid_cfg.get("enabled", False))
+
     identity_work = artifact_dir / "identity"
     crops_dir = identity_work / "crops"
     evidence_dir = identity_work / "evidence"
     tracks_json = identity_work / "tracks.json"
+    pipeline_start = time.perf_counter()
+    stage_seconds: dict[str, float] = {}
+
     _export_person_group_tracks(tracks_jsonl, tracks_json)
 
     exclude_ids = _official_group_ids(artifact_dir)
+    crop_start = time.perf_counter()
     build_tracklet_crops(
         video=video_path,
         tracks_json=tracks_json,
         output_dir=crops_dir,
-        top_k=int(jersey_ocr.get("max_candidates_per_person") or 48),
-        min_spacing_frames=int(jersey_ocr.get("min_spacing_frames") or 3),
+        top_k=int(jersey_ocr.get("max_candidates_per_person") or 5),
+        min_spacing_frames=int(jersey_ocr.get("min_spacing_frames") or 15),
         exclude_track_ids=exclude_ids,
         jersey_ocr=jersey_ocr,
     )
+    stage_seconds["candidate_selection"] = time.perf_counter() - crop_start
     manifest_path = crops_dir / "tracklet_keyframes.json"
     team_hints = _team_hint_by_group(artifact_dir, game_context)
     _apply_team_hints(manifest_path, team_hints)
 
+    ocr_start = time.perf_counter()
     ocr_summary = run_tracklet_ocr(
         manifest_path,
         evidence_dir / "ocr.json",
         jersey_ocr=jersey_ocr,
+        profile=True,
     )
-    embed_faces(manifest_path, evidence_dir / "face.json")
-    embed_reid(manifest_path, evidence_dir / "reid.json")
+    stage_seconds["ocr_total"] = time.perf_counter() - ocr_start
+    stage_seconds["ocr_init"] = float(ocr_summary.get("ocr_init_seconds") or 0.0)
 
+    manifest = _read_json(manifest_path)
+    track_count = max(len(manifest), 1)
+    candidate_share = stage_seconds["candidate_selection"] / track_count
+
+    if face_enabled:
+        face_start = time.perf_counter()
+        face_summary = embed_faces(
+            manifest_path,
+            evidence_dir / "face.json",
+            use_insightface=bool(face_cfg.get("use_insightface", False)),
+        )
+        stage_seconds["face_embeddings"] = time.perf_counter() - face_start
+    else:
+        face_summary = _write_skipped_embeddings(
+            manifest_path,
+            evidence_dir / "face.json",
+            field_name="face_embeddings",
+            backend="disabled",
+        )
+        stage_seconds["face_embeddings"] = 0.0
+
+    if reid_enabled:
+        reid_start = time.perf_counter()
+        reid_summary = embed_reid(manifest_path, evidence_dir / "reid.json")
+        stage_seconds["reid_embeddings"] = time.perf_counter() - reid_start
+    else:
+        reid_summary = _write_skipped_embeddings(
+            manifest_path,
+            evidence_dir / "reid.json",
+            field_name="reid_embeddings",
+            backend="disabled",
+        )
+        stage_seconds["reid_embeddings"] = 0.0
+
+    resolve_start = time.perf_counter()
     resolved_path = identity_work / "resolved_tracklets.json"
     resolver_summary = resolve_game(
         video_id=job_id,
@@ -282,6 +416,55 @@ def resolve_job_identity(
         roster_jsonl=roster_jsonl,
         output_path=resolved_path,
         team_hint=None,
+    )
+    stage_seconds["final_resolution"] = time.perf_counter() - resolve_start
+    stage_seconds["total"] = time.perf_counter() - pipeline_start
+
+    per_track_profiles: list[dict] = []
+    ocr_by_track = {
+        int(row["track_id"]): row
+        for row in ocr_summary.get("per_track_profiles") or []
+    }
+    for track in manifest:
+        tid = int(track["track_id"])
+        ocr_row = ocr_by_track.get(tid, {})
+        per_track_profiles.append(
+            {
+                "track_id": tid,
+                "candidate_selection_seconds": round(candidate_share, 2),
+                "ocr_seconds": float(ocr_row.get("ocr_seconds") or 0.0),
+                "ocr_calls": int(ocr_row.get("ocr_calls") or 0),
+                "face_seconds": round(
+                    stage_seconds["face_embeddings"] / track_count, 2
+                )
+                if face_enabled
+                else 0.0,
+                "reid_seconds": round(
+                    stage_seconds["reid_embeddings"] / track_count, 2
+                )
+                if reid_enabled
+                else 0.0,
+                "total_seconds": round(
+                    candidate_share
+                    + float(ocr_row.get("ocr_seconds") or 0.0)
+                    + (
+                        stage_seconds["face_embeddings"] / track_count
+                        if face_enabled
+                        else 0.0
+                    )
+                    + (
+                        stage_seconds["reid_embeddings"] / track_count
+                        if reid_enabled
+                        else 0.0
+                    ),
+                    2,
+                ),
+            }
+        )
+    _log_identity_timing_summary(
+        job_id=job_id,
+        per_track=per_track_profiles,
+        stage_seconds=stage_seconds,
     )
 
     resolved_payload = _read_json(resolved_path)
@@ -301,7 +484,13 @@ def resolve_job_identity(
         "identity_attachments": str(updated_identity.resolve()),
         "resolved_tracklets": str(resolved_path.resolve()),
         "ocr": ocr_summary,
+        "face": face_summary,
+        "reid": reid_summary,
         "resolver": resolver_summary,
+        "timing": stage_seconds,
+        "per_track_profiles": per_track_profiles,
+        "face_embeddings_enabled": face_enabled,
+        "reid_embeddings_enabled": reid_enabled,
     }
 
 

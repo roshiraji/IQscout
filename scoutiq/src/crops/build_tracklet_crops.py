@@ -15,8 +15,8 @@ import cv2
 import numpy as np
 
 DEFAULT_JERSEY_OCR = {
-    "max_candidates_per_person": 48,
-    "min_spacing_frames": 3,
+    "max_candidates_per_person": 5,
+    "min_spacing_frames": 15,
     "min_bbox_height": 100,
     "min_bbox_width": 45,
     "min_sharpness": 25.0,

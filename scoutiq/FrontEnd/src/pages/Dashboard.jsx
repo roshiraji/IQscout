@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import VideoUpload from "../components/VideoUpload";
-import HeatmapViewer from "../components/HeatmapViewer";
+import TrajectoryViewer from "../components/TrajectoryViewer";
 import ProcessingStatus from "../components/ProcessingStatus";
 import ProcessingVideoPlayer from "../components/ProcessingVideoPlayer_1";
 import PlayerSnapshotSelector from "../components/PlayerSnapshotSelector";
@@ -39,8 +39,6 @@ function Dashboard() {
 
   const [videoUrl, setVideoUrl] = useState("");
 
-  const [heatmapUrl, setHeatmapUrl] = useState("");
-
   const [tracking, setTracking] = useState(null);
 
   const [trackingVideoUrl, setTrackingVideoUrl] = useState("");
@@ -63,6 +61,10 @@ function Dashboard() {
     away_team: "",
   });
 
+  const [seekTime, setSeekTime] = useState(null);
+  const [seekNonce, setSeekNonce] = useState(0);
+  const [focusEvent, setFocusEvent] = useState(null);
+  const [timelineRefreshKey, setTimelineRefreshKey] = useState(0);
 
 
   useEffect(() => {
@@ -196,8 +198,6 @@ function Dashboard() {
 
     setVideoUrl("");
 
-    setHeatmapUrl("");
-
     setTracking(null);
 
     setTrackingVideoUrl("");
@@ -235,16 +235,6 @@ function Dashboard() {
         const filename = payload.labeling.annotated_video.split(/[/\\]/).pop();
 
         setVideoUrl(`/api/files/annotated/${encodeURIComponent(filename)}`);
-
-      }
-
-
-
-      if (payload.labeling?.heatmap_png) {
-
-        const heatmapName = payload.labeling.heatmap_png.split(/[/\\]/).pop();
-
-        setHeatmapUrl(`/api/files/heatmap/${encodeURIComponent(heatmapName)}`);
 
       }
 
@@ -449,6 +439,8 @@ function Dashboard() {
         isolatedVideoUrl={trackingIsolatedVideoUrl}
         isolateStatus={isolateStatus}
         jobId={jobId}
+        seekTime={seekTime}
+        seekNonce={seekNonce}
         onPossessionUpdated={(payload) => {
           if (!payload?.coach_insights) return;
           setTracking((current) =>
@@ -478,12 +470,33 @@ function Dashboard() {
 
       <div className="card video-panel">
         <h2>Game Events</h2>
-        <EventTable />
+        <EventTable
+          jobId={jobId}
+          enabled={Boolean(jobId && job?.status === "ready")}
+          refreshKey={timelineRefreshKey}
+          onEventSelect={(event) => {
+            const t = Number(event?.start_time);
+            if (Number.isFinite(t)) {
+              setSeekTime(t);
+              setSeekNonce((n) => n + 1);
+            }
+            setFocusEvent(event);
+          }}
+        />
       </div>
 
-      <ProcessingVideoPlayer videoUrl={videoUrl} />
+      <ProcessingVideoPlayer
+        videoUrl={videoUrl}
+        seekTime={seekTime}
+        seekNonce={seekNonce}
+      />
 
-      <HeatmapViewer imageUrl={heatmapUrl} />
+      <TrajectoryViewer
+        jobId={jobId}
+        enabled={Boolean(jobId && job?.status === "ready")}
+        focusEvent={focusEvent}
+        onGenerateComplete={() => setTimelineRefreshKey((k) => k + 1)}
+      />
 
 
 

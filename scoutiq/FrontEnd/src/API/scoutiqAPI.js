@@ -183,6 +183,36 @@ export function jobFileUrl(jobId, kind, query = "") {
   return `${API_BASE}/jobs/${encodeURIComponent(jobId)}/files/${kind}${q}`;
 }
 
+export async function generateJobTrajectories(jobId) {
+  const response = await fetch(
+    `${API_BASE}/jobs/${encodeURIComponent(jobId)}/analytics/trajectories/generate`,
+    { method: "POST" }
+  );
+  return parseJsonResponse(response);
+}
+
+export async function getJobTrajectories(jobId, variant = "analytics") {
+  const params = new URLSearchParams({ variant });
+  const response = await fetch(
+    `${API_BASE}/jobs/${encodeURIComponent(jobId)}/analytics/trajectories?${params}`
+  );
+  return parseJsonResponse(response);
+}
+
+export async function getJobSegments(jobId) {
+  const response = await fetch(
+    `${API_BASE}/jobs/${encodeURIComponent(jobId)}/analytics/segments`
+  );
+  return parseJsonResponse(response);
+}
+
+export async function getJobTimeline(jobId) {
+  const response = await fetch(
+    `${API_BASE}/jobs/${encodeURIComponent(jobId)}/analytics/timeline`
+  );
+  return parseJsonResponse(response);
+}
+
 export async function getHealth() {
   const response = await fetch(`${API_BASE}/health`);
   return parseJsonResponse(response);
