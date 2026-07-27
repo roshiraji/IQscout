@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import VideoUpload from "../components/VideoUpload";
 import TrajectoryViewer from "../components/TrajectoryViewer";
 import ProcessingStatus from "../components/ProcessingStatus";
-import ProcessingVideoPlayer from "../components/ProcessingVideoPlayer_1";
 import PlayerSnapshotSelector from "../components/PlayerSnapshotSelector";
 import TrackingResults from "../components/TrackingResults";
 import ConfirmProgress from "../components/ConfirmProgress";
@@ -14,6 +13,7 @@ import {
   getJob,
   getConfirmStatus,
   getIsolateStatus,
+  getWnbaTeams,
   saveTrackingSelection,
   jobFileUrl,
 } from "../API/scoutiqAPI";
@@ -37,8 +37,6 @@ function Dashboard() {
 
   const [labeling, setLabeling] = useState(null);
 
-  const [videoUrl, setVideoUrl] = useState("");
-
   const [tracking, setTracking] = useState(null);
 
   const [trackingVideoUrl, setTrackingVideoUrl] = useState("");
@@ -60,12 +58,33 @@ function Dashboard() {
     home_team: "",
     away_team: "",
   });
+  const [wnbaTeams, setWnbaTeams] = useState([]);
+  const [wnbaTeamsNote, setWnbaTeamsNote] = useState("");
 
   const [seekTime, setSeekTime] = useState(null);
   const [seekNonce, setSeekNonce] = useState(0);
   const [focusEvent, setFocusEvent] = useState(null);
   const [timelineRefreshKey, setTimelineRefreshKey] = useState(0);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const payload = await getWnbaTeams();
+        if (cancelled) return;
+        setWnbaTeams(Array.isArray(payload.teams) ? payload.teams : []);
+        setWnbaTeamsNote(payload.note || "");
+      } catch (err) {
+        if (!cancelled) {
+          setWnbaTeams([]);
+          setWnbaTeamsNote(err.message || "Could not load WNBA teams.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!jobId || job?.status === "ready" || job?.status === "failed") {
@@ -196,8 +215,6 @@ function Dashboard() {
 
     setLabeling(null);
 
-    setVideoUrl("");
-
     setTracking(null);
 
     setTrackingVideoUrl("");
@@ -226,16 +243,6 @@ function Dashboard() {
         setJob(payload.job);
       } else if (payload.validation?.usable) {
         setError("Video passed intake but no background tracking job was created.");
-      }
-
-
-
-      if (payload.labeling?.annotated_video) {
-
-        const filename = payload.labeling.annotated_video.split(/[/\\]/).pop();
-
-        setVideoUrl(`/api/files/annotated/${encodeURIComponent(filename)}`);
-
       }
 
     } catch (err) {
@@ -358,34 +365,110 @@ function Dashboard() {
         <p>WNBA Vision Analytics Platform</p>
       </div>
 
-      <div className="card">
+      <div className="card game-context-card">
         <h2>Optional Game Context</h2>
         <p className="status-text">
           Team and date context will constrain future roster/RAG identity matches.
           Leave fields blank when unknown; tracking does not depend on identity.
         </p>
-        <div className="metadata-grid">
-          {[
-            ["league", "League"],
-            ["game_date", "Game date"],
-            ["home_team", "Home team"],
-            ["away_team", "Away team"],
-          ].map(([key, label]) => (
-            <label key={key}>
-              <strong>{label}</strong>
-              <input
-                type={key === "game_date" ? "date" : "text"}
-                value={gameContext[key]}
+        <div className="game-context-grid">
+          <div className="game-context-field">
+            <span className="game-context-field-label">League</span>
+            <input
+              type="text"
+              value={gameContext.league}
+              onChange={(event) =>
+                setGameContext((current) => ({
+                  ...current,
+                  league: event.target.value,
+                }))
+              }
+            />
+          </div>
+          <div className="game-context-field">
+            <span className="game-context-field-label">Game date</span>
+            <input
+              type="date"
+              className="game-context-date"
+              value={gameContext.game_date}
+              onChange={(event) =>
+                setGameContext((current) => ({
+                  ...current,
+                  game_date: event.target.value,
+                }))
+              }
+            />
+          </div>
+          <div className="game-context-field">
+            <span className="game-context-field-label">Home team</span>
+            {wnbaTeams.length > 0 ? (
+              <select
+                value={gameContext.home_team}
                 onChange={(event) =>
                   setGameContext((current) => ({
                     ...current,
-                    [key]: event.target.value,
+                    home_team: event.target.value,
+                  }))
+                }
+              >
+                <option value="">Select home team</option>
+                {wnbaTeams.map((team) => (
+                  <option key={`home-${team.abbreviation}`} value={team.abbreviation}>
+                    {team.display_name} ({team.abbreviation})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                placeholder="e.g. IND"
+                value={gameContext.home_team}
+                onChange={(event) =>
+                  setGameContext((current) => ({
+                    ...current,
+                    home_team: event.target.value,
                   }))
                 }
               />
-            </label>
-          ))}
+            )}
+          </div>
+          <div className="game-context-field">
+            <span className="game-context-field-label">Away team</span>
+            {wnbaTeams.length > 0 ? (
+              <select
+                value={gameContext.away_team}
+                onChange={(event) =>
+                  setGameContext((current) => ({
+                    ...current,
+                    away_team: event.target.value,
+                  }))
+                }
+              >
+                <option value="">Select away team</option>
+                {wnbaTeams.map((team) => (
+                  <option key={`away-${team.abbreviation}`} value={team.abbreviation}>
+                    {team.display_name} ({team.abbreviation})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                placeholder="e.g. ATL"
+                value={gameContext.away_team}
+                onChange={(event) =>
+                  setGameContext((current) => ({
+                    ...current,
+                    away_team: event.target.value,
+                  }))
+                }
+              />
+            )}
+          </div>
         </div>
+        {wnbaTeamsNote ? (
+          <p className="status-text game-context-teams-note">{wnbaTeamsNote}</p>
+        ) : null}
       </div>
 
       <VideoUpload
@@ -485,30 +568,12 @@ function Dashboard() {
         />
       </div>
 
-      <ProcessingVideoPlayer
-        videoUrl={videoUrl}
-        seekTime={seekTime}
-        seekNonce={seekNonce}
-      />
-
       <TrajectoryViewer
         jobId={jobId}
         enabled={Boolean(jobId && job?.status === "ready")}
         focusEvent={focusEvent}
         onGenerateComplete={() => setTimelineRefreshKey((k) => k + 1)}
       />
-
-
-
-      {!validation && !error && !isBusy && (
-
-        <p className="status-text">
-
-          Choose an MP4 and click Analyze to validate the clip and pick players to track.
-
-        </p>
-
-      )}
 
     </div>
 

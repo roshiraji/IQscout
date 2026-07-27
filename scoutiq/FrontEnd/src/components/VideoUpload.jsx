@@ -32,6 +32,9 @@ function VideoUpload({ onAnalyze, isBusy, isSaving = false, selectedFileName }) 
         <button type="button" onClick={handleAnalyzeClick} disabled={isBusy || !file}>
           {isBusy ? "Analyzing…" : "Analyze"}
         </button>
+        <p className="upload-action-hint">
+          Choose an MP4 and click Analyze to validate the clip and pick players to track.
+        </p>
       </div>
       {file && <p className="file-name">Selected: {file.name}</p>}
       {isBusy && selectedFileName && (

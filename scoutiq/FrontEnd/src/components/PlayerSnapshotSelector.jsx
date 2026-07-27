@@ -56,6 +56,7 @@ function PlayerSnapshotSelector({
   const [isResolvingIdentity, setIsResolvingIdentity] = useState(false);
   const [manualJerseys, setManualJerseys] = useState({});
   const [manualResolvingTrack, setManualResolvingTrack] = useState(null);
+  const [manualPanelOpen, setManualPanelOpen] = useState(false);
 
   const frameWidth = snapshot?.frame_width || 1;
   const frameHeight = snapshot?.frame_height || 1;
@@ -79,6 +80,7 @@ function PlayerSnapshotSelector({
     setViewMode("labels");
     setIdentityMessage("");
     setManualJerseys({});
+    setManualPanelOpen(false);
   }, [snapshot?.job_id]);
 
   useEffect(() => {
@@ -125,6 +127,38 @@ function PlayerSnapshotSelector({
       };
     }
     return null;
+  }
+
+  /** Merge live identity resolve into a snapshot player for display + Confirm. */
+  function withResolvedIdentity(player) {
+    const identity = playerIdentity(player);
+    if (!identity?.player_name) return player;
+    return {
+      ...player,
+      player_name: identity.player_name,
+      jersey_number: identity.jersey_number ?? player.jersey_number,
+      team_id: identity.team_id ?? player.team_id,
+      identity_status: identity.status ?? player.identity_status,
+      identity_confidence: identity.confidence ?? player.identity_confidence,
+      identity_reason: identity.reason ?? player.identity_reason,
+    };
+  }
+
+  function playerDisplayTitle(player) {
+    const identity = identitySummary(player);
+    const name = identity?.name || player.player_name;
+    const jersey = identity?.jersey || player.jersey_number;
+    const base = name
+      ? jersey
+        ? `${name} · #${jersey}`
+        : name
+      : player.label;
+    const conf =
+      player.confidence != null
+        ? ` (${Math.round(Number(player.confidence) * 100)}%)`
+        : "";
+    const team = player.team_label ? ` · ${player.team_label}` : "";
+    return `${base}${conf}${team}`;
   }
 
   function identitySummary(player) {
@@ -217,7 +251,9 @@ function PlayerSnapshotSelector({
     }
 
     setSaveMessage("");
-    const result = await onConfirm(selectedPlayers);
+    // Pass resolved roster names so focused preview labels use identity, not Person #N.
+    const enrichedPlayers = selectedPlayers.map(withResolvedIdentity);
+    const result = await onConfirm(enrichedPlayers);
     if (result?.message) {
       setSaveMessage(result.message);
     }
@@ -308,7 +344,9 @@ function PlayerSnapshotSelector({
             const teamColor = player.overlay_color_hex || "#ffffff";
             const identity = identitySummary(player);
             const labelText = identity?.name
-              ? `${player.player_name || player.label} → ${identity.name}`
+              ? identity.jersey
+                ? `${identity.name} · #${identity.jersey}`
+                : identity.name
               : player.player_name || player.label;
             return (
               <button
@@ -375,8 +413,7 @@ function PlayerSnapshotSelector({
               onClick={() => togglePlayer(key)}
             >
               <span className="player-chip-title">
-                {player.player_name || player.label} ({Math.round(player.confidence * 100)}%)
-                {player.team_label ? ` · ${player.team_label}` : ""}
+                {playerDisplayTitle(player)}
               </span>
               {identity && (
                 <span className="player-chip-identity">
@@ -397,55 +434,70 @@ function PlayerSnapshotSelector({
       </div>
 
       {jobId && (
-        <div className="identity-manual-panel">
-          <h3>Manual jersey fallback</h3>
-          <p className="status-text">
-            When automatic OCR cannot read a number, enter the jersey you see on
-            screen. ScoutIQ will match team context + roster safely.
-          </p>
-          <div className="identity-manual-list">
-            {players
-              .filter((player) => player.role !== "official")
-              .map((player) => {
-                const trackId = player.track_id ?? player.person_group_id;
-                const teamLabel =
-                  player.team_label
-                  || player.roster_team_id
-                  || player.jersey_color_name
-                  || "Unknown team";
-                return (
-                  <div key={trackId} className="identity-manual-row">
-                    <span className="identity-manual-label">
-                      {player.label} · {teamLabel}
-                    </span>
-                    <label className="identity-manual-input-wrap">
-                      <span className="sr-only">Jersey number for {player.label}</span>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        className="identity-manual-input"
-                        placeholder="Jersey #"
-                        value={manualJerseys[trackId] || ""}
-                        onChange={(event) =>
-                          setManualJerseys((current) => ({
-                            ...current,
-                            [trackId]: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="identity-manual-button"
-                      disabled={manualResolvingTrack === trackId}
-                      onClick={() => handleManualResolve(trackId)}
-                    >
-                      {manualResolvingTrack === trackId ? "Resolving…" : "Resolve"}
-                    </button>
-                  </div>
-                );
-              })}
-          </div>
+        <div className={`identity-manual-panel ${manualPanelOpen ? "is-open" : "is-collapsed"}`}>
+          <button
+            type="button"
+            className="identity-manual-toggle"
+            aria-expanded={manualPanelOpen}
+            onClick={() => setManualPanelOpen((open) => !open)}
+          >
+            <span className="identity-manual-toggle-title">Manual jersey fallback</span>
+            <span className="identity-manual-toggle-meta">
+              {manualPanelOpen ? "Hide" : "Show"} ·{" "}
+              {players.filter((player) => player.role !== "official").length} players
+            </span>
+          </button>
+          {manualPanelOpen ? (
+            <>
+              <p className="status-text">
+                When automatic OCR cannot read a number, enter the jersey you see on
+                screen. ScoutIQ will match team context + roster safely.
+              </p>
+              <div className="identity-manual-list">
+                {players
+                  .filter((player) => player.role !== "official")
+                  .map((player) => {
+                    const trackId = player.track_id ?? player.person_group_id;
+                    const teamLabel =
+                      player.team_label
+                      || player.roster_team_id
+                      || player.jersey_color_name
+                      || "Unknown team";
+                    return (
+                      <div key={trackId} className="identity-manual-row">
+                        <span className="identity-manual-label">
+                          {player.label} · {teamLabel}
+                        </span>
+                        <label className="identity-manual-input-wrap">
+                          <span className="sr-only">Jersey number for {player.label}</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            className="identity-manual-input"
+                            placeholder="Jersey #"
+                            value={manualJerseys[trackId] || ""}
+                            onChange={(event) =>
+                              setManualJerseys((current) => ({
+                                ...current,
+                                [trackId]: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="identity-manual-button"
+                          disabled={manualResolvingTrack === trackId}
+                          onClick={() => handleManualResolve(trackId)}
+                        >
+                          {manualResolvingTrack === trackId ? "Resolving…" : "Resolve"}
+                        </button>
+                      </div>
+                    );
+                  })}
+              </div>
+            </>
+          ) : null}
         </div>
       )}
 

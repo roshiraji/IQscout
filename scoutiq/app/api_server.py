@@ -54,6 +54,7 @@ from src.pipeline.resolve_job_identity import resolve_job_identity, resolve_manu
 from src.analytics.service import (  # noqa: E402
     AnalyticsServiceError,
     generate_analytics_for_job,
+    get_ball_preview_for_job,
     get_segments_for_job,
     get_timeline_for_job,
     get_trajectories_for_job,
@@ -151,7 +152,27 @@ def health() -> dict[str, str | list[str]]:
             "identity_resolve",
             "intake",
             "app_shutdown",
+            "wnba_team_roster",
         ],
+    }
+
+
+@app.get("/api/wnba/teams")
+def list_wnba_roster_teams() -> dict:
+    """Current WNBA teams from outputs/wnba_players.db for Home/Away pickers."""
+    from wnba_player_database import list_wnba_teams
+
+    teams = list_wnba_teams()
+    return {
+        "available": bool(teams),
+        "team_count": len(teams),
+        "teams": teams,
+        "note": (
+            "Select abbreviations (e.g. IND) so roster identity matching does "
+            "not fail on typos like 'Indiana Fevers'."
+            if teams
+            else "Roster DB missing — rebuild with python -m src.wnba_player_database."
+        ),
     }
 
 
@@ -284,6 +305,56 @@ async def analyze_video(
             ) from exc
 
     return response
+
+
+def _enrich_selected_players_with_identity(
+    job_id: str, selected_players: list[dict]
+) -> list[dict]:
+    """Attach resolved roster names from identity_attachments onto Confirm payload.
+
+    Cheap JSON read only — no OCR/roster recompute. Ensures focused preview
+    labels use player_name when identity was resolved before Confirm.
+    """
+    if not selected_players:
+        return selected_players
+    identity_path = get_job_manager().artifact_dir(Path(job_id).name) / "identity_attachments.json"
+    if not identity_path.is_file():
+        return selected_players
+    try:
+        payload = json.loads(identity_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return selected_players
+
+    by_track: dict[int, dict] = {}
+    for item in payload.get("attachments", []) or []:
+        try:
+            by_track[int(item["track_id"])] = item
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    enriched: list[dict] = []
+    for player in selected_players:
+        row = dict(player)
+        tid = row.get("track_id", row.get("person_group_id"))
+        if tid is None:
+            enriched.append(row)
+            continue
+        try:
+            attachment = by_track.get(int(tid))
+        except (TypeError, ValueError):
+            attachment = None
+        if attachment and attachment.get("player_name"):
+            row["player_name"] = attachment.get("player_name")
+            if attachment.get("jersey_number") is not None:
+                row["jersey_number"] = attachment.get("jersey_number")
+            if attachment.get("team_id") is not None:
+                row["team_id"] = attachment.get("team_id")
+            if attachment.get("status") is not None:
+                row["identity_status"] = attachment.get("status")
+            if attachment.get("confidence") is not None:
+                row["identity_confidence"] = attachment.get("confidence")
+        enriched.append(row)
+    return enriched
 
 
 @app.get("/api/jobs/{job_id}")
@@ -558,6 +629,15 @@ def get_job_analytics_timeline(job_id: str) -> dict:
         raise  # pragma: no cover
 
 
+@app.get("/api/jobs/{job_id}/analytics/ball-preview")
+def get_job_analytics_ball_preview(job_id: str) -> dict:
+    """Return normalized ball centers for trajectory preview (empty if unavailable)."""
+    job_dir = _analytics_job_dir(job_id)
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    return get_ball_preview_for_job(job_dir)
+
+
 @app.post("/api/jobs/{job_id}/offense-team")
 def set_offense_team(job_id: str, body: OffenseTeamOverrideRequest) -> dict:
     """Set offense team (0/1) or Auto — recomputes Matchup roles only."""
@@ -798,15 +878,18 @@ def save_tracking_selection(body: TrackingSelectionRequest) -> dict:
                 status_code=409,
                 detail=f"Tracking job is {state.get('status')}; wait until ready.",
             )
+        selected_players = _enrich_selected_players_with_identity(
+            body.job_id, list(body.selected_players)
+        )
         selection_path = manager.artifact_dir(body.job_id) / "selection.json"
         payload = {
             "job_id": body.job_id,
             "selected_person_group_ids": selected_group_ids,
             "selected_track_ids": selected_ids,
-            "selected_players": body.selected_players,
+            "selected_players": selected_players,
             "selected_labels": [
                 player.get("player_name") or player.get("label")
-                for player in body.selected_players
+                for player in selected_players
             ],
         }
         selection_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -839,7 +922,7 @@ def save_tracking_selection(body: TrackingSelectionRequest) -> dict:
                 manager.artifact_dir(body.job_id),
                 None if selected_group_ids else selected_ids,
                 selected_person_group_ids=selected_group_ids or None,
-                selected_players=body.selected_players,
+                selected_players=selected_players,
                 quiet=True,
                 progress_cb=_confirm_progress,
             )
