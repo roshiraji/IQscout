@@ -12,8 +12,20 @@ weights: outputs/training_loop_v2/best_player_seg_v2.pt
 conf: 0.25
 iou: 0.70
 
-# Inference device: "0" for first CUDA GPU, "cpu", or "auto".
-device: "cpu"
+# Inference device: "auto" pulls CUDA when available, else CPU.
+# Force "cpu" or "0" only when you need to override the probe.
+device: "auto"
+
+# Pull as much local compute as the machine allows during Analyze.
+performance:
+  mode: auto                 # auto | cpu  (auto = prefer GPU)
+  pull: hard                 # hard = all cores + FP16 + warmup + fast encode
+  torch_threads: auto        # hard → every logical CPU
+  opencv_threads: auto
+  half: auto                 # FP16 on CUDA
+  imgsz: auto                # ~800 on 8GB GPU, larger on bigger cards
+  warmup: true               # dummy forward before first frame
+  # encode_preset: veryfast # optional override (hard default)
 
 # Exclusion JSONs (court ROI / scorebug). Soft-fails to defaults if missing.
 exclusions_dir: data/exclusions
@@ -52,7 +64,7 @@ stitch:
 # Clusters visible players into ~2 teams (e.g. red vs blue) on a dense frame.
 jersey_teams:
   enabled: true
-  top_frame_fraction: 0.92
+  top_frame_fraction: 0.80   # include early dense frames (0.92 skipped first ~3s)
   max_candidate_frames: 12
 
 # Optional named identity (Resolve jersey identities). Searches each person's
@@ -95,8 +107,8 @@ ball:
   enabled: true
   weights: outputs/training_loop_ball/best_ball_det.pt
   conf: 0.25
-  device: "cpu"          # use "0" when CUDA available and ball train done
-  every_n_frames: 2      # raise to 2–3 on CPU if Analyze is too slow
+  device: "auto"         # follows GPU when present
+  every_n_frames: auto   # 1 on GPU, 2 on CPU
   hsv_fallback: true
   track:
     iou_threshold: 0.15
@@ -109,7 +121,7 @@ ball:
     enabled: true
     weights: outputs/training_loop_hoop_ref/best_hoop_ref_seg.pt
     conf: 0.40           # precision/recall balance (0.80+ is too sparse)
-    every_n_frames: 15
+    every_n_frames: auto     # hard GPU pull → ~8; CPU → 20
   possession:
     max_dist_norm: 0.12
     min_held_fraction: 0.12
@@ -127,8 +139,9 @@ ball:
 #       ai       = LaMa only on full erase mask
 #       temporal = neighbor fill + OpenCV inpaint (CPU-friendly)
 isolate:
-  mode: temporal             # hybrid | ai | temporal — falls back to temporal if GPU/pkg missing
-  ai_backend: lama         # lama (propainter reserved)
+  mode: auto               # hybrid on GPU+LaMa, temporal on CPU-only
+  ai_backend: lama         # lama only — ProPainter's weights are non-commercial
+  ai_prefer: speed         # speed = smaller LaMa crops (faster); quality = larger
   erase_dilate: 13         # stronger non-selected fringe removal
   keep_dilate: 7           # protect selected player pixels under overlap
   bbox_expand: 0.12        # expand erase bbox to catch shoes/arms
@@ -136,18 +149,29 @@ isolate:
   lama_leftover_min_pixels: 64
   min_temporal_samples: 2  # ignore weak 1-neighbor fills (they look smeary)
   lama_full_erase: true    # LaMa repaints whole hole — kills stuck blur
+  # Skip temporal seed when full-erase is on (LaMa overwrites it) — big speedup.
+  skip_temporal_when_full_erase: true
   hard_composite: true     # no soft-blend of removed players back in
-  # Fast path on local GPU (RTX 3070 8GB): crop erase region + downscale for LaMa.
-  ai_working_side: 768     # set null or "full" for max quality / slower
-  crop_pad: 48
-  orb_features: 700        # temporal align cost on CPU
+  # Fast path sized from VRAM (auto): ~640 on 8GB speed mode.
+  ai_working_side: auto
+  crop_pad: auto           # 32 under speed, 48 under quality
+  orb_features: 700        # temporal align cost on CPU (only when temporal runs)
   # ai_max_side: 1024      # optional hard tile cap; omit = VRAM probe + cache
+  use_homography: true        # perspective alignment vs. plain affine — tracks camera pan/zoom
+  homography_min_inliers: 12  # below this, fall back to the similarity affine
+  wide_neighbor_search: true  # sample more candidate frames per hole for median blending
+  edge_feather_px: 2           # blur the erase/background cutline this many px on either side
+  write_quality_metrics: true  # emit isolate_quality.json per render for QA
+  prep_queue_depth: auto       # CPU frames prepared ahead of GPU LaMa
+  warp_workers: auto           # parallel neighbor warps when temporal fill runs
 
 # Analytics layers (trajectories / segments / events). Thresholds only —
 # generation reuses existing job tracking outputs (no YOLO re-run).
 analytics:
   trajectories:
     max_gap_frames: 15           # break path fragments across longer missing-frame gaps
+    max_interpolate_gap_frames: 6 # bridge short missed-detection gaps with straight-line interpolation
+    smoothing_window_frames: 5    # centered moving-average window that cancels per-frame box/mask jitter
   heatmap_density:
     bins_x: 48                   # horizontal bins in normalized screen space
     bins_y: 27                   # vertical bins (~16:9)

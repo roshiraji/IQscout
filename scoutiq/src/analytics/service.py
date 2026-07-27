@@ -64,15 +64,18 @@ def load_jsonl_gz(path: Path) -> list[dict[str, Any]]:
 
 def require_tracking_artifacts(job_dir: Path) -> Path:
     tracks = job_dir / "tracks.jsonl.gz"
-    if not tracks.is_file():
-        alt = job_dir / "tracks.jsonl"
-        if alt.is_file():
-            return alt
-        raise AnalyticsServiceError(
-            404,
-            "Tracking output is missing (tracks.jsonl.gz). Run Analyze first.",
-        )
-    return tracks
+    if tracks.is_file():
+        return tracks
+    locked = job_dir / "locked_tracks.jsonl.gz"
+    if locked.is_file():
+        return locked
+    alt = job_dir / "tracks.jsonl"
+    if alt.is_file():
+        return alt
+    raise AnalyticsServiceError(
+        404,
+        "Tracking output is missing (tracks.jsonl.gz). Run Analyze first.",
+    )
 
 
 def require_frame_metadata(job_dir: Path) -> None:

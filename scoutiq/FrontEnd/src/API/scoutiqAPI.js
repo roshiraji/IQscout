@@ -178,6 +178,18 @@ export async function setOffenseTeam(jobId, { mode = "manual", offense_team_id =
   return parseJsonResponse(response);
 }
 
+export async function setPlayOutcome(jobId, { tag = null, note = null } = {}) {
+  const response = await fetch(
+    `${API_BASE}/jobs/${encodeURIComponent(jobId)}/play-outcome`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tag, note }),
+    }
+  );
+  return parseJsonResponse(response);
+}
+
 export function jobFileUrl(jobId, kind, query = "") {
   const q = query ? (query.startsWith("?") ? query : `?${query}`) : "";
   return `${API_BASE}/jobs/${encodeURIComponent(jobId)}/files/${kind}${q}`;

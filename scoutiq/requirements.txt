@@ -3,6 +3,12 @@ ultralytics>=8.4.60
 torch
 torchvision
 torchaudio
+torchreid
+gdown
+tensorboard
+# SAM 2.1 video predictor: propagates the clicked player masks through contact.
+# Weights are not on PyPI; see docs for models/sam2/sam2.1_hiera_base_plus.pt.
+sam2>=1.1.0
 numpy
 pandas
 matplotlib

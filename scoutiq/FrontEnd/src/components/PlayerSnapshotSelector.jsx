@@ -56,6 +56,7 @@ function PlayerSnapshotSelector({
   const [isResolvingIdentity, setIsResolvingIdentity] = useState(false);
   const [manualJerseys, setManualJerseys] = useState({});
   const [manualResolvingTrack, setManualResolvingTrack] = useState(null);
+  const [manualJerseyOpen, setManualJerseyOpen] = useState(false);
 
   const frameWidth = snapshot?.frame_width || 1;
   const frameHeight = snapshot?.frame_height || 1;
@@ -79,6 +80,7 @@ function PlayerSnapshotSelector({
     setViewMode("labels");
     setIdentityMessage("");
     setManualJerseys({});
+    setManualJerseyOpen(false);
   }, [snapshot?.job_id]);
 
   useEffect(() => {
@@ -217,7 +219,14 @@ function PlayerSnapshotSelector({
     }
 
     setSaveMessage("");
-    const result = await onConfirm(selectedPlayers);
+    // Stamp snapshot frame + boxes so Confirm locks the bodies you clicked,
+    // not a rematched stranger at the wrong frame.
+    const stamped = selectedPlayers.map((player) => ({
+      ...player,
+      snapshot_frame_number: snapshot.snapshot_frame_number,
+      timestamp_seconds: snapshot.timestamp_seconds,
+    }));
+    const result = await onConfirm(stamped);
     if (result?.message) {
       setSaveMessage(result.message);
     }
@@ -234,8 +243,9 @@ function PlayerSnapshotSelector({
         Click a stitched person group ({selectionUnit}) on the snapshot. Masks are
         colored by jersey team (e.g. red vs blue) so home/away is easy to see.
         Select at least two players, then Confirm for a focused preview and coach
-        insights — the model is not rerun. Change the selection and Confirm again
-        anytime to rebuild the focused preview for a new set of players. Frame{" "}
+        insights — tracking already covers the full clip from frame 0 (model is not
+        rerun). Change the selection and Confirm again anytime to rebuild the focused
+        preview. Snapshot frame{" "}
         {snapshot.snapshot_frame_number} at {snapshot.timestamp_seconds}s —{" "}
         {players.length} selectable people.
       </p>
@@ -326,14 +336,10 @@ function PlayerSnapshotSelector({
                     ? isSelected
                       ? "#00d26a"
                       : teamColor
-                    : isSelected
-                      ? "#00d26a"
-                      : "transparent",
+                    : "transparent",
                   boxShadow: showLabels
                     ? `inset 0 0 0 2px ${teamColor}55`
-                    : isSelected
-                      ? `inset 0 0 0 2px #00d26a88`
-                      : "none",
+                    : "none",
                 }}
                 onClick={() => togglePlayer(key)}
                 title={`${labelText} (${player.confidence})`}
@@ -397,54 +403,76 @@ function PlayerSnapshotSelector({
       </div>
 
       {jobId && (
-        <div className="identity-manual-panel">
-          <h3>Manual jersey fallback</h3>
-          <p className="status-text">
-            When automatic OCR cannot read a number, enter the jersey you see on
-            screen. ScoutIQ will match team context + roster safely.
-          </p>
-          <div className="identity-manual-list">
-            {players
-              .filter((player) => player.role !== "official")
-              .map((player) => {
-                const trackId = player.track_id ?? player.person_group_id;
-                const teamLabel =
-                  player.team_label
-                  || player.roster_team_id
-                  || player.jersey_color_name
-                  || "Unknown team";
-                return (
-                  <div key={trackId} className="identity-manual-row">
-                    <span className="identity-manual-label">
-                      {player.label} · {teamLabel}
-                    </span>
-                    <label className="identity-manual-input-wrap">
-                      <span className="sr-only">Jersey number for {player.label}</span>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        className="identity-manual-input"
-                        placeholder="Jersey #"
-                        value={manualJerseys[trackId] || ""}
-                        onChange={(event) =>
-                          setManualJerseys((current) => ({
-                            ...current,
-                            [trackId]: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="identity-manual-button"
-                      disabled={manualResolvingTrack === trackId}
-                      onClick={() => handleManualResolve(trackId)}
-                    >
-                      {manualResolvingTrack === trackId ? "Resolving…" : "Resolve"}
-                    </button>
-                  </div>
-                );
-              })}
+        <div
+          className={`identity-manual-fold${manualJerseyOpen ? " identity-manual-fold-open" : ""}`}
+        >
+          <button
+            type="button"
+            className="identity-manual-fold-toggle"
+            aria-expanded={manualJerseyOpen}
+            aria-controls="manual-jersey-panel"
+            onClick={() => setManualJerseyOpen((open) => !open)}
+          >
+            <span className="identity-manual-fold-title">Manual jersey fallback</span>
+            <span className="identity-manual-fold-hint">
+              {manualJerseyOpen ? "Hide" : "Optional — click to open"}
+            </span>
+            <span className="identity-manual-fold-chevron" aria-hidden="true">
+              {manualJerseyOpen ? "▴" : "▾"}
+            </span>
+          </button>
+          <div
+            id="manual-jersey-panel"
+            className="identity-manual-fold-body"
+            hidden={!manualJerseyOpen}
+          >
+            <p className="status-text">
+              When automatic OCR cannot read a number, enter the jersey you see on
+              screen. ScoutIQ will match team context + roster safely.
+            </p>
+            <div className="identity-manual-list">
+              {players
+                .filter((player) => player.role !== "official")
+                .map((player) => {
+                  const trackId = player.track_id ?? player.person_group_id;
+                  const teamLabel =
+                    player.team_label
+                    || player.roster_team_id
+                    || player.jersey_color_name
+                    || "Unknown team";
+                  return (
+                    <div key={trackId} className="identity-manual-row">
+                      <span className="identity-manual-label">
+                        {player.label} · {teamLabel}
+                      </span>
+                      <label className="identity-manual-input-wrap">
+                        <span className="sr-only">Jersey number for {player.label}</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          className="identity-manual-input"
+                          placeholder="Jersey #"
+                          value={manualJerseys[trackId] || ""}
+                          onChange={(event) =>
+                            setManualJerseys((current) => ({
+                              ...current,
+                              [trackId]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="identity-manual-button"
+                        disabled={manualResolvingTrack === trackId}
+                        onClick={() => handleManualResolve(trackId)}
+                      >
+                        {manualResolvingTrack === trackId ? "Resolving…" : "Resolve"}
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
           </div>
         </div>
       )}

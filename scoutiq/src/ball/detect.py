@@ -43,6 +43,7 @@ def detect_balls(
                 conf=conf,
                 device=device,
                 verbose=False,
+                half=str(device).lower() not in {"cpu", ""},
             )
             for r in results or []:
                 boxes = getattr(r, "boxes", None)

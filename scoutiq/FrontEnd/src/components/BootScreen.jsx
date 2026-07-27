@@ -58,6 +58,7 @@ function BootScreen({ onReady }) {
   const [bootPhase, setBootPhase] = useState("warming");
   const [error, setError] = useState("");
   const [fadeKey, setFadeKey] = useState(0);
+  const [hardwareLabel, setHardwareLabel] = useState("");
 
   useEffect(() => {
     const tick = window.setInterval(() => {
@@ -79,6 +80,19 @@ function BootScreen({ onReady }) {
       try {
         const health = await getHealth();
         if (!cancelled && health?.status === "ok") {
+          const hw = health.hardware || {};
+          const perf = health.performance || {};
+          if (hw.cuda) {
+            const half = perf.half ? " · FP16" : "";
+            const pull = perf.pull ? ` · ${perf.pull}` : "";
+            setHardwareLabel(
+              `${hw.device_name || "CUDA"} · ${hw.vram_gb || "?"}GB · ${perf.torch_threads || hw.cpu_count || "?"} thr · imgsz ${perf.imgsz || "?"}${half}${pull}`
+            );
+          } else {
+            setHardwareLabel(
+              `CPU · ${perf.torch_threads || hw.cpu_count || "?"} threads · pull ${perf.pull || "hard"}`
+            );
+          }
           setBootPhase("ready");
           window.setTimeout(() => {
             if (!cancelled) onReady?.();
@@ -161,7 +175,12 @@ function BootScreen({ onReady }) {
             </div>
             <div className="boot-progress-row">
               <div className="boot-spinner" aria-hidden="true" />
-              <p className="boot-message">{phaseLabel}</p>
+              <div className="boot-progress-copy">
+                <p className="boot-message">{phaseLabel}</p>
+                {hardwareLabel ? (
+                  <p className="boot-hardware">{hardwareLabel}</p>
+                ) : null}
+              </div>
             </div>
           </div>
         )}

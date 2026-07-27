@@ -1,0 +1,46 @@
+﻿# Temporary continuity A/B — stricter ByteTrack association.
+# Hypothesis: higher IoU match threshold converts ID swaps into new tracklets
+# that stitch can merge (non-overlapping), instead of hijacking live IDs.
+
+weights: outputs/training_loop_v2/best_player_seg_v2.pt
+conf: 0.25
+iou: 0.70
+device: "auto"
+performance:
+  mode: auto
+  torch_threads: auto
+  opencv_threads: auto
+exclusions_dir: data/exclusions
+mask_overlay: true
+mask_smooth_alpha: 0.35
+min_track_frames: 3
+max_frames: null
+tracker:
+  tracker_type: bytetrack
+  track_activation_threshold: 0.25
+  lost_track_buffer: 60
+  minimum_matching_threshold: 0.85
+stitch:
+  enabled: true
+  max_gap_seconds: 1.5
+  max_center_distance_ratio: 0.18
+  color_weight: 0.65
+  appearance_weight: 0.35
+  spatial_weight: 0.25
+  min_merge_score: 0.55
+  min_group_frames: 8
+  keyframe_samples: 3
+  use_osnet: true
+jersey_teams:
+  enabled: true
+  top_frame_fraction: 0.92
+  max_candidate_frames: 12
+identity:
+  auto_resolve_enabled: false
+ball:
+  enabled: false
+quality:
+  min_frame_coverage: 0.90
+  min_mean_detection_confidence: 0.50
+  max_short_track_ratio: 0.35
+  max_track_gap_frames: 30

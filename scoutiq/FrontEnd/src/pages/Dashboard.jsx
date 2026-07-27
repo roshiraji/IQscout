@@ -28,6 +28,8 @@ function Dashboard() {
 
   const [selectedFileName, setSelectedFileName] = useState("");
 
+  const [activeTab, setActiveTab] = useState("analyze");
+
   const [validation, setValidation] = useState(null);
 
   const [snapshot, setSnapshot] = useState(null);
@@ -38,6 +40,7 @@ function Dashboard() {
   const [labeling, setLabeling] = useState(null);
 
   const [videoUrl, setVideoUrl] = useState("");
+  const [allPlayersVideoUrl, setAllPlayersVideoUrl] = useState("");
 
   const [tracking, setTracking] = useState(null);
 
@@ -73,20 +76,33 @@ function Dashboard() {
     }
 
     let cancelled = false;
+    let consecutivePollFailures = 0;
     const poll = async () => {
       try {
         const payload = await getJob(jobId);
         if (cancelled) return;
+        consecutivePollFailures = 0;
+        setError((current) =>
+          current === "Tracking job not found." ? "" : current
+        );
         setJob(payload);
         if (payload.status === "ready" && payload.result?.snapshot) {
           setSnapshot(payload.result.snapshot);
           setSnapshotImageUrl(jobFileUrl(jobId, "snapshot"));
           setSnapshotMasksImageUrl(jobFileUrl(jobId, "snapshot_masks"));
+          setAllPlayersVideoUrl(jobFileUrl(jobId, "all"));
+          setVideoUrl(jobFileUrl(jobId, "all"));
         } else if (payload.status === "failed") {
           // IngestProgress shows job.error — avoid duplicate Error panel below.
         }
       } catch (err) {
-        if (!cancelled) setError(err.message || "Job polling failed.");
+        if (cancelled) return;
+        consecutivePollFailures += 1;
+        // Job state is atomically replaced while tracking. On mapped Windows
+        // workspaces a poll can briefly see no JSON; do not paint a false
+        // fatal error over a live job.
+        if (consecutivePollFailures < 5) return;
+        setError(err.message || "Job polling failed.");
       }
     };
 
@@ -177,6 +193,25 @@ function Dashboard() {
     };
   }, [jobId, isSavingSelection]);
 
+  // Advance workspace tabs only on pipeline milestones (don't fight manual clicks).
+  useEffect(() => {
+    if (isBusy || ingestPhase) {
+      setActiveTab("analyze");
+    }
+  }, [isBusy, ingestPhase]);
+
+  useEffect(() => {
+    if (snapshot && job?.status === "ready" && !tracking && !isSavingSelection) {
+      setActiveTab("select");
+    }
+  }, [snapshot, job?.status, tracking, isSavingSelection]);
+
+  useEffect(() => {
+    if (tracking) {
+      setActiveTab("results");
+    }
+  }, [tracking]);
+
 
 
   async function handleAnalyze(file) {
@@ -197,6 +232,7 @@ function Dashboard() {
     setLabeling(null);
 
     setVideoUrl("");
+    setAllPlayersVideoUrl("");
 
     setTracking(null);
 
@@ -206,6 +242,9 @@ function Dashboard() {
     setIsolateStatus(null);
     setConfirmStatus(null);
     setError("");
+    setSeekTime(null);
+    setFocusEvent(null);
+    setTimelineRefreshKey(0);
 
     setJobId("");
 
@@ -301,6 +340,16 @@ function Dashboard() {
         const bust = `v=${stamp}&g=${encodeURIComponent(groupKey)}`;
         setTrackingVideoUrl(jobFileUrl(jobId, "focused", bust));
         setTrackingMasksVideoUrl(jobFileUrl(jobId, "focused_masks", bust));
+        // Open focused film on the snapshot moment — not t=0 where backward
+        // lock may have gaps or older bodies.
+        const snapT = Number(
+          payload.tracking.timestamp_seconds ?? snapshot?.timestamp_seconds
+        );
+        if (Number.isFinite(snapT)) {
+          setSeekTime(snapT);
+          setSeekNonce((n) => n + 1);
+        }
+        setActiveTab("results");
         setConfirmStatus({
           status: "ready",
           stage: "ready",
@@ -358,158 +407,298 @@ function Dashboard() {
         <p>WNBA Vision Analytics Platform</p>
       </div>
 
-      <div className="card">
-        <h2>Optional Game Context</h2>
-        <p className="status-text">
-          Team and date context will constrain future roster/RAG identity matches.
-          Leave fields blank when unknown; tracking does not depend on identity.
-        </p>
-        <div className="metadata-grid">
+      <div className="workspace-shell">
+        <div className="workspace-tabs" role="tablist" aria-label="ScoutIQ workspace">
           {[
-            ["league", "League"],
-            ["game_date", "Game date"],
-            ["home_team", "Home team"],
-            ["away_team", "Away team"],
-          ].map(([key, label]) => (
-            <label key={key}>
-              <strong>{label}</strong>
-              <input
-                type={key === "game_date" ? "date" : "text"}
-                value={gameContext[key]}
-                onChange={(event) =>
-                  setGameContext((current) => ({
-                    ...current,
-                    [key]: event.target.value,
-                  }))
-                }
-              />
-            </label>
+            {
+              id: "analyze",
+              label: "Analyze",
+              hint: "Upload & track",
+              ready: true,
+              badge: isBusy || job?.status === "tracking" ? "…" : job?.status === "ready" ? "✓" : null,
+            },
+            {
+              id: "select",
+              label: "Select",
+              hint: "Pick players",
+              ready: Boolean(snapshot) || isSavingSelection,
+              badge: isSavingSelection ? "…" : tracking ? "✓" : snapshot ? "•" : null,
+            },
+            {
+              id: "results",
+              label: "Results",
+              hint: "Film & insights",
+              ready: Boolean(tracking),
+              badge: isolateStatus?.status === "processing" ? "…" : tracking ? "✓" : null,
+            },
+              {
+              id: "more",
+              label: "Events",
+              hint: "Timeline & paths",
+              ready: true,
+              badge: job?.status === "ready" ? "•" : null,
+            },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              className={`workspace-tab${activeTab === tab.id ? " workspace-tab-active" : ""}${
+                tab.ready ? "" : " workspace-tab-locked"
+              }`}
+              disabled={!tab.ready && tab.id !== "analyze" && tab.id !== "more"}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              <span className="workspace-tab-label">
+                {tab.label}
+                {tab.badge ? <span className="workspace-tab-badge">{tab.badge}</span> : null}
+              </span>
+              <span className="workspace-tab-hint">{tab.hint}</span>
+            </button>
           ))}
         </div>
+
+        <div className="workspace-panel" role="tabpanel">
+          {activeTab === "analyze" && (
+            <>
+              <div className="card">
+                <h2>Optional Game Context</h2>
+                <p className="status-text">
+                  Team and date context will constrain future roster/RAG identity matches.
+                  Leave fields blank when unknown; tracking does not depend on identity.
+                </p>
+                <div className="metadata-grid">
+                  {[
+                    ["league", "League"],
+                    ["game_date", "Game date"],
+                    ["home_team", "Home team"],
+                    ["away_team", "Away team"],
+                  ].map(([key, label]) => (
+                    <label key={key}>
+                      <strong>{label}</strong>
+                      <input
+                        type={key === "game_date" ? "date" : "text"}
+                        value={gameContext[key]}
+                        onChange={(event) =>
+                          setGameContext((current) => ({
+                            ...current,
+                            [key]: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <VideoUpload
+                onAnalyze={handleAnalyze}
+                isBusy={isBusy}
+                isSaving={isSavingSelection}
+                selectedFileName={selectedFileName}
+              />
+
+              <IngestProgress
+                isBusy={isBusy}
+                ingestPhase={ingestPhase}
+                selectedFileName={selectedFileName}
+                job={job}
+                validation={validation}
+              />
+
+              <ProcessingStatus
+                validation={validation}
+                labeling={labeling}
+                snapshot={snapshot}
+                job={job}
+                error={error}
+                hideJobProgress
+              />
+
+              {!validation && !error && !isBusy && (
+                <p className="status-text workspace-empty-hint">
+                  Choose an MP4 and click Analyze to validate the clip and pick players to track.
+                </p>
+              )}
+
+              {job?.status === "ready" && allPlayersVideoUrl && (
+                <div className="card">
+                  <h2>Full-clip tracking preview</h2>
+                  <p className="status-text">
+                    Boxes and IDs from frame 0 through the end of the clip. Continue to
+                    Select to pick players for a focused preview.
+                  </p>
+                  <ProcessingVideoPlayer videoUrl={allPlayersVideoUrl} />
+                </div>
+              )}
+
+              {job?.status === "ready" && snapshot && (
+                <div className="workspace-next-row">
+                  <button type="button" onClick={() => setActiveTab("select")}>
+                    Continue to Select →
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === "select" && (
+            <>
+              {!snapshot && !isSavingSelection ? (
+                <div className="card workspace-empty-card">
+                  <h2>Select players</h2>
+                  <p className="status-text">
+                    Finish Analyze first. When full-clip tracking is ready, pick athletes here.
+                  </p>
+                  <button type="button" onClick={() => setActiveTab("analyze")}>
+                    ← Back to Analyze
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <PlayerSnapshotSelector
+                    snapshot={snapshot}
+                    imageUrl={snapshotImageUrl}
+                    masksImageUrl={snapshotMasksImageUrl}
+                    jobId={jobId}
+                    onConfirm={handleConfirmSelection}
+                    isSaving={isSavingSelection}
+                  />
+                  <ConfirmProgress
+                    confirmStatus={confirmStatus}
+                    isolateStatus={isolateStatus}
+                    isSaving={isSavingSelection}
+                  />
+                  {tracking && (
+                    <div className="workspace-next-row">
+                      <button type="button" onClick={() => setActiveTab("results")}>
+                        View Results →
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          )}
+
+          {activeTab === "results" && (
+            <>
+              {!tracking ? (
+                <div className="card workspace-empty-card">
+                  <h2>Results</h2>
+                  <p className="status-text">
+                    Confirm a player selection to unlock focused film, isolate, and Matchup Outcomes.
+                  </p>
+                  <button type="button" onClick={() => setActiveTab("select")}>
+                    ← Back to Select
+                  </button>
+                </div>
+              ) : (
+                <TrackingResults
+                  key={tracking?.isolation_generation || "no-tracking"}
+                  tracking={tracking}
+                  videoUrl={trackingVideoUrl}
+                  masksVideoUrl={trackingMasksVideoUrl}
+                  isolatedVideoUrl={trackingIsolatedVideoUrl}
+                  isolateStatus={isolateStatus}
+                  jobId={jobId}
+                  seekTime={seekTime}
+                  seekNonce={seekNonce}
+                  onPossessionUpdated={(payload) => {
+                    if (!payload?.coach_insights) return;
+                    setTracking((current) =>
+                      current
+                        ? {
+                            ...current,
+                            coach_insights: payload.coach_insights,
+                            coach_narrative:
+                              payload.coach_narrative || current.coach_narrative,
+                            possession: payload.possession || current.possession,
+                            offense_team_id: payload.possession?.offense_team_id,
+                            defense_team_id: payload.possession?.defense_team_id,
+                          }
+                        : current
+                    );
+                  }}
+                  onPlayOutcomeUpdated={(payload) => {
+                    if (!payload?.coach_insights) return;
+                    setTracking((current) =>
+                      current
+                        ? {
+                            ...current,
+                            coach_insights: payload.coach_insights,
+                            coach_narrative:
+                              payload.coach_narrative || current.coach_narrative,
+                            play_outcome: payload.play_outcome ?? current.play_outcome,
+                          }
+                        : current
+                    );
+                  }}
+                  onNewSelection={() => {
+                    setTracking(null);
+                    setTrackingVideoUrl("");
+                    setTrackingMasksVideoUrl("");
+                    setTrackingIsolatedVideoUrl("");
+                    setIsolateStatus(null);
+                    setConfirmStatus(null);
+                    setError("");
+                    setFocusEvent(null);
+                    setActiveTab("select");
+                  }}
+                />
+              )}
+            </>
+          )}
+
+          {activeTab === "more" && (
+            <>
+              <div className="card video-panel">
+                <h2>Game Events</h2>
+                <EventTable
+                  jobId={jobId}
+                  enabled={Boolean(jobId && job?.status === "ready")}
+                  refreshKey={timelineRefreshKey}
+                  onEventSelect={(event) => {
+                    const t = Number(event?.start_time);
+                    if (Number.isFinite(t)) {
+                      setSeekTime(t);
+                      setSeekNonce((n) => n + 1);
+                    }
+                    setFocusEvent(event);
+                  }}
+                />
+              </div>
+
+              <TrajectoryViewer
+                jobId={jobId}
+                enabled={Boolean(jobId && job?.status === "ready")}
+                focusEvent={focusEvent}
+                masksImageUrl={snapshotMasksImageUrl}
+                playVideoUrl={allPlayersVideoUrl || videoUrl}
+                masksVideoUrl={trackingMasksVideoUrl}
+                confirmSelectedIds={tracking?.selected_person_group_ids || null}
+                onGenerateComplete={() => setTimelineRefreshKey((k) => k + 1)}
+              />
+
+              <ProcessingVideoPlayer
+                videoUrl={trackingVideoUrl || videoUrl}
+                masksVideoUrl={trackingMasksVideoUrl}
+                seekTime={seekTime}
+                seekNonce={seekNonce}
+                title={trackingVideoUrl ? "Focused Players" : "Processed Video"}
+              />
+
+              {!jobId && (
+                <p className="status-text workspace-empty-hint">
+                  After Analyze finishes, generate trajectories here and browse Game Events.
+                  Click an event to seek video and highlight paths.
+                </p>
+              )}
+            </>
+          )}
+        </div>
       </div>
-
-      <VideoUpload
-
-        onAnalyze={handleAnalyze}
-
-        isBusy={isBusy}
-
-        isSaving={isSavingSelection}
-
-        selectedFileName={selectedFileName}
-
-      />
-
-      <IngestProgress
-        isBusy={isBusy}
-        ingestPhase={ingestPhase}
-        selectedFileName={selectedFileName}
-        job={job}
-        validation={validation}
-      />
-
-      <ProcessingStatus
-        validation={validation}
-        labeling={labeling}
-        snapshot={snapshot}
-        job={job}
-        error={error}
-        hideJobProgress
-      />
-
-
-      <PlayerSnapshotSelector
-        snapshot={snapshot}
-        imageUrl={snapshotImageUrl}
-        masksImageUrl={snapshotMasksImageUrl}
-        jobId={jobId}
-        onConfirm={handleConfirmSelection}
-        isSaving={isSavingSelection}
-      />
-      <ConfirmProgress
-        confirmStatus={confirmStatus}
-        isolateStatus={isolateStatus}
-        isSaving={isSavingSelection}
-      />
-      <TrackingResults
-        key={tracking?.isolation_generation || "no-tracking"}
-        tracking={tracking}
-        videoUrl={trackingVideoUrl}
-        masksVideoUrl={trackingMasksVideoUrl}
-        isolatedVideoUrl={trackingIsolatedVideoUrl}
-        isolateStatus={isolateStatus}
-        jobId={jobId}
-        seekTime={seekTime}
-        seekNonce={seekNonce}
-        onPossessionUpdated={(payload) => {
-          if (!payload?.coach_insights) return;
-          setTracking((current) =>
-            current
-              ? {
-                  ...current,
-                  coach_insights: payload.coach_insights,
-                  coach_narrative:
-                    payload.coach_narrative || current.coach_narrative,
-                  possession: payload.possession || current.possession,
-                  offense_team_id: payload.possession?.offense_team_id,
-                  defense_team_id: payload.possession?.defense_team_id,
-                }
-              : current
-          );
-        }}
-        onNewSelection={() => {
-          setTracking(null);
-          setTrackingVideoUrl("");
-          setTrackingMasksVideoUrl("");
-          setTrackingIsolatedVideoUrl("");
-          setIsolateStatus(null);
-          setConfirmStatus(null);
-          setError("");
-        }}
-      />
-
-      <div className="card video-panel">
-        <h2>Game Events</h2>
-        <EventTable
-          jobId={jobId}
-          enabled={Boolean(jobId && job?.status === "ready")}
-          refreshKey={timelineRefreshKey}
-          onEventSelect={(event) => {
-            const t = Number(event?.start_time);
-            if (Number.isFinite(t)) {
-              setSeekTime(t);
-              setSeekNonce((n) => n + 1);
-            }
-            setFocusEvent(event);
-          }}
-        />
-      </div>
-
-      <ProcessingVideoPlayer
-        videoUrl={videoUrl}
-        seekTime={seekTime}
-        seekNonce={seekNonce}
-      />
-
-      <TrajectoryViewer
-        jobId={jobId}
-        enabled={Boolean(jobId && job?.status === "ready")}
-        focusEvent={focusEvent}
-        onGenerateComplete={() => setTimelineRefreshKey((k) => k + 1)}
-      />
-
-
-
-      {!validation && !error && !isBusy && (
-
-        <p className="status-text">
-
-          Choose an MP4 and click Analyze to validate the clip and pick players to track.
-
-        </p>
-
-      )}
-
     </div>
 
   );

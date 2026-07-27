@@ -103,6 +103,17 @@ class OffenseTeamOverrideRequest(BaseModel):
     offense_team_id: int | None = None
     mode: str = "manual"  # "manual" | "auto"
 
+
+class PlayOutcomeRequest(BaseModel):
+    """Coach/user tag for what happened on this clip, or null to clear.
+
+    We don't auto-detect shot make/miss, so this is how Matchup Outcomes
+    learns the actual result and blends it into the Offense/Defense grades.
+    """
+
+    tag: str | None = None  # "make" | "miss" | "foul_drawn" | "turnover" | "no_shot" | None
+    note: str | None = None
+
 app = FastAPI(title="ScoutIQ API", version="0.1.0")
 
 app.add_middleware(
@@ -132,9 +143,30 @@ def _ensure_directories() -> None:
 
 
 @app.get("/api/health")
-def health() -> dict[str, str | list[str]]:
+def health() -> dict:
+    from src.pipeline.hardware import describe_hardware
+    from src.pipeline.player_track_pipeline import load_pipeline_config
+
+    try:
+        perf = (load_pipeline_config().get("performance") or {})
+    except Exception:  # noqa: BLE001
+        perf = {}
     return {
         "status": "ok",
+        "hardware": describe_hardware(),
+        "performance": {
+            "pull": perf.get("pull"),
+            "resolved_device": perf.get("resolved_device"),
+            "resolved_ball_device": perf.get("resolved_ball_device"),
+            "resolved_isolate_mode": perf.get("resolved_isolate_mode"),
+            "torch_threads": perf.get("torch_threads"),
+            "opencv_threads": perf.get("opencv_threads"),
+            "half": perf.get("half"),
+            "imgsz": perf.get("imgsz"),
+            "warmup": perf.get("warmup"),
+            "encode_threads": perf.get("encode_threads"),
+            "encode_preset": perf.get("encode_preset"),
+        },
         "features": [
             "background_tracking_jobs",
             "canonical_snapshot",
@@ -151,6 +183,10 @@ def health() -> dict[str, str | list[str]]:
             "identity_resolve",
             "intake",
             "app_shutdown",
+            "resource_pull_auto",
+            "analytics_trajectories",
+            "analytics_timeline",
+            "play_outcome_tagging",
         ],
     }
 
@@ -558,6 +594,108 @@ def get_job_analytics_timeline(job_id: str) -> dict:
         raise  # pragma: no cover
 
 
+def _recompute_coach_insights(
+    artifact_dir: Path,
+    *,
+    possession: dict | None,
+    play_outcome: dict | None,
+) -> tuple[dict | None, str | None]:
+    """Rebuild Matchup Outcomes from the existing selection, no re-detect.
+
+    Shared by the offense-team override and play-outcome endpoints — both
+    change an input to ``compute_coach_insights`` without touching tracking.
+    Returns (coach_insights, coach_narrative); coach_insights is
+    ``{"error": ...}`` if the refresh itself fails (the caller's own change
+    is still persisted either way).
+    """
+    from src.pipeline.coach_insights import compute_coach_insights
+
+    selection_summary_path = artifact_dir / "selection_summary.json"
+    selected_csv = artifact_dir / "selected_tracks.csv"
+    if not selected_csv.is_file() or not selection_summary_path.is_file():
+        return None, None
+
+    try:
+        import csv
+
+        rows = list(csv.DictReader(selected_csv.open(encoding="utf-8")))
+        # Normalize numeric fields used by coach insights.
+        for row in rows:
+            for key in (
+                "frame_number",
+                "person_group_id",
+                "track_id",
+                "x1",
+                "y1",
+                "x2",
+                "y2",
+                "center_x",
+                "center_y",
+                "stance_x",
+                "stance_y",
+                "timestamp_seconds",
+            ):
+                if row.get(key) not in (None, ""):
+                    try:
+                        row[key] = float(row[key]) if "." in str(row[key]) else int(float(row[key]))
+                    except (TypeError, ValueError):
+                        pass
+        summary = json.loads(selection_summary_path.read_text(encoding="utf-8"))
+        gids = [int(g) for g in (summary.get("selected_person_group_ids") or [])]
+        label_by = {
+            int(v): k for k, v in (summary.get("track_mapping") or {}).items()
+        }
+        # Team meta from person_groups / snapshot.
+        team_meta: dict[int, dict] = {}
+        groups_path = artifact_dir / "person_groups.json"
+        if groups_path.is_file():
+            groups_payload = json.loads(groups_path.read_text(encoding="utf-8"))
+            for g in groups_payload.get("person_groups") or []:
+                gid = int(g["person_group_id"])
+                team_meta[gid] = {
+                    "team_id": g.get("team_id"),
+                    "jersey_color_name": g.get("jersey_color_name"),
+                    "role": g.get("role"),
+                    "player_label": label_by.get(gid) or g.get("label"),
+                }
+        width = int((summary.get("quality") or {}).get("frame_width") or 1920)
+        height = int((summary.get("quality") or {}).get("frame_height") or 1080)
+        # Prefer snapshot dimensions if present.
+        snap = artifact_dir / "snapshot.json"
+        if snap.is_file():
+            snap_data = json.loads(snap.read_text(encoding="utf-8"))
+            width = int(snap_data.get("frame_width") or width)
+            height = int(snap_data.get("frame_height") or height)
+        coach_insights = compute_coach_insights(
+            rows,
+            source_frame_count=int(summary.get("source_frame_count") or 1),
+            frame_width=width,
+            frame_height=height,
+            label_by_group=label_by,
+            team_meta_by_group=team_meta,
+            primary_pair=tuple(sorted(gids)[:2]) if len(gids) >= 2 else None,
+            possession=possession,
+            play_outcome=play_outcome,
+        )
+        coach_narrative = coach_insights.get("coach_narrative")
+        (artifact_dir / "coach_insights.json").write_text(
+            json.dumps(coach_insights, indent=2), encoding="utf-8"
+        )
+        summary["coach_insights"] = coach_insights
+        summary["coach_narrative"] = coach_narrative
+        summary["possession"] = possession
+        summary["offense_team_id"] = (possession or {}).get("offense_team_id")
+        summary["defense_team_id"] = (possession or {}).get("defense_team_id")
+        summary["play_outcome"] = play_outcome
+        selection_summary_path.write_text(
+            json.dumps(summary, indent=2), encoding="utf-8"
+        )
+        return coach_insights, coach_narrative
+    except Exception as exc:  # noqa: BLE001
+        # Caller's own change (override / tag) is still saved; refresh is best-effort.
+        return {"error": str(exc)}, None
+
+
 @app.post("/api/jobs/{job_id}/offense-team")
 def set_offense_team(job_id: str, body: OffenseTeamOverrideRequest) -> dict:
     """Set offense team (0/1) or Auto — recomputes Matchup roles only."""
@@ -583,7 +721,6 @@ def set_offense_team(job_id: str, body: OffenseTeamOverrideRequest) -> dict:
     artifact_dir = manager.artifact_dir(Path(job_id).name)
     try:
         from src.ball.live import apply_offense_team_override
-        from src.pipeline.coach_insights import compute_coach_insights
         from src.pipeline.player_track_pipeline import load_pipeline_config
 
         cfg = load_pipeline_config()
@@ -599,88 +736,13 @@ def set_offense_team(job_id: str, body: OffenseTeamOverrideRequest) -> dict:
             status_code=500, detail=f"Offense override failed: {exc}"
         ) from exc
 
-    # Recompute Matchup Outcomes from existing selection without re-detect.
-    coach_insights = None
-    coach_narrative = None
-    selection_summary_path = artifact_dir / "selection_summary.json"
-    selected_csv = artifact_dir / "selected_tracks.csv"
-    if selected_csv.is_file() and selection_summary_path.is_file():
-        try:
-            import csv
+    from src.pipeline.play_outcome import load_play_outcome
 
-            rows = list(csv.DictReader(selected_csv.open(encoding="utf-8")))
-            # Normalize numeric fields used by coach insights.
-            for row in rows:
-                for key in (
-                    "frame_number",
-                    "person_group_id",
-                    "track_id",
-                    "x1",
-                    "y1",
-                    "x2",
-                    "y2",
-                    "center_x",
-                    "center_y",
-                    "stance_x",
-                    "stance_y",
-                    "timestamp_seconds",
-                ):
-                    if row.get(key) not in (None, ""):
-                        try:
-                            row[key] = float(row[key]) if "." in str(row[key]) else int(float(row[key]))
-                        except (TypeError, ValueError):
-                            pass
-            summary = json.loads(selection_summary_path.read_text(encoding="utf-8"))
-            gids = [int(g) for g in (summary.get("selected_person_group_ids") or [])]
-            label_by = {
-                int(v): k for k, v in (summary.get("track_mapping") or {}).items()
-            }
-            # Team meta from person_groups / snapshot.
-            team_meta: dict[int, dict] = {}
-            groups_path = artifact_dir / "person_groups.json"
-            if groups_path.is_file():
-                groups_payload = json.loads(groups_path.read_text(encoding="utf-8"))
-                for g in groups_payload.get("person_groups") or []:
-                    gid = int(g["person_group_id"])
-                    team_meta[gid] = {
-                        "team_id": g.get("team_id"),
-                        "jersey_color_name": g.get("jersey_color_name"),
-                        "role": g.get("role"),
-                        "player_label": label_by.get(gid) or g.get("label"),
-                    }
-            width = int((summary.get("quality") or {}).get("frame_width") or 1920)
-            height = int((summary.get("quality") or {}).get("frame_height") or 1080)
-            # Prefer snapshot dimensions if present.
-            snap = artifact_dir / "snapshot.json"
-            if snap.is_file():
-                snap_data = json.loads(snap.read_text(encoding="utf-8"))
-                width = int(snap_data.get("frame_width") or width)
-                height = int(snap_data.get("frame_height") or height)
-            coach_insights = compute_coach_insights(
-                rows,
-                source_frame_count=int(summary.get("source_frame_count") or 1),
-                frame_width=width,
-                frame_height=height,
-                label_by_group=label_by,
-                team_meta_by_group=team_meta,
-                primary_pair=tuple(sorted(gids)[:2]) if len(gids) >= 2 else None,
-                possession=possession,
-            )
-            coach_narrative = coach_insights.get("coach_narrative")
-            (artifact_dir / "coach_insights.json").write_text(
-                json.dumps(coach_insights, indent=2), encoding="utf-8"
-            )
-            summary["coach_insights"] = coach_insights
-            summary["coach_narrative"] = coach_narrative
-            summary["possession"] = possession
-            summary["offense_team_id"] = possession.get("offense_team_id")
-            summary["defense_team_id"] = possession.get("defense_team_id")
-            selection_summary_path.write_text(
-                json.dumps(summary, indent=2), encoding="utf-8"
-            )
-        except Exception as exc:  # noqa: BLE001
-            # Override still saved; insights refresh is best-effort.
-            coach_insights = {"error": str(exc)}
+    coach_insights, coach_narrative = _recompute_coach_insights(
+        artifact_dir,
+        possession=possession,
+        play_outcome=load_play_outcome(artifact_dir),
+    )
 
     return {
         "job_id": job_id,
@@ -696,6 +758,77 @@ def set_offense_team(job_id: str, body: OffenseTeamOverrideRequest) -> dict:
             )
         ),
         "possession": possession,
+        "coach_insights": coach_insights,
+        "coach_narrative": coach_narrative,
+    }
+
+
+@app.get("/api/jobs/{job_id}/play-outcome")
+def get_play_outcome(job_id: str) -> dict:
+    """Current play-outcome tag (make/miss/foul_drawn/turnover/no_shot) for a job."""
+    manager = get_job_manager()
+    state = manager.get(Path(job_id).name)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    from src.pipeline.play_outcome import load_play_outcome
+
+    artifact_dir = manager.artifact_dir(Path(job_id).name)
+    return {"job_id": job_id, "play_outcome": load_play_outcome(artifact_dir)}
+
+
+@app.post("/api/jobs/{job_id}/play-outcome")
+def set_play_outcome(job_id: str, body: PlayOutcomeRequest) -> dict:
+    """Tag (or clear) what actually happened on this clip.
+
+    We don't auto-detect shot make/miss — this is how a coach tells Matchup
+    Outcomes the real result, which blends into the Offense/Defense grades
+    without re-running tracking.
+    """
+    manager = get_job_manager()
+    state = manager.get(Path(job_id).name)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    if state.get("status") != "ready":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Tracking job is {state.get('status')}; wait until ready.",
+        )
+
+    from src.pipeline.play_outcome import PLAY_OUTCOME_TAGS, write_play_outcome
+
+    tag = body.tag
+    if tag is not None and tag not in PLAY_OUTCOME_TAGS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"tag must be one of {PLAY_OUTCOME_TAGS} or null to clear.",
+        )
+
+    artifact_dir = manager.artifact_dir(Path(job_id).name)
+    try:
+        play_outcome = write_play_outcome(artifact_dir, tag, note=body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    possession_path = artifact_dir / "possession.json"
+    possession = None
+    if possession_path.is_file():
+        try:
+            possession = json.loads(possession_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            possession = None
+
+    coach_insights, coach_narrative = _recompute_coach_insights(
+        artifact_dir,
+        possession=possession,
+        play_outcome=play_outcome,
+    )
+
+    return {
+        "job_id": job_id,
+        "message": (
+            f"Play tagged: {tag.replace('_', ' ')}." if tag else "Play outcome tag cleared."
+        ),
+        "play_outcome": play_outcome,
         "coach_insights": coach_insights,
         "coach_narrative": coach_narrative,
     }

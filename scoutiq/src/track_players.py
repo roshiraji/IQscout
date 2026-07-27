@@ -4,8 +4,8 @@ Player tracking for user-selected targets.
 After the GUI snapshot step, the user picks Player_# boxes. This module:
 1. Runs YOLO person detection on every frame
 2. Associates detections with ByteTrack IDs
-3. Locks onto the selected players at the snapshot frame
-4. Exports per-frame positions for the rest of the clip
+3. Locks selected boxes → track IDs at the snapshot frame
+4. Exports per-frame positions for the full clip (including before snapshot)
 
 Output feeds future ScoutIQ metrics (speed, spacing, screens, etc.).
 No spacing or tactical scoring in this step yet.
@@ -43,12 +43,25 @@ from src.pipeline.coach_insights import (  # noqa: E402
     write_pair_distances_csv,
 )
 from src.pipeline.geometry_points import stance_point_from_mask  # noqa: E402
+from src.pipeline.play_outcome import load_play_outcome  # noqa: E402
 from src.pipeline.player_track_pipeline import (  # noqa: E402
     _apply_device,
     _resolve,
     _slugify,
     load_pipeline_config,
 )
+from src.pipeline.selection_lock import (  # noqa: E402
+    build_locked_frame_records,
+    lock_selected_bodies,
+    write_locked_tracks_jsonl,
+)
+from src.pipeline.jersey_team_colors import enrich_tracks_with_appearance  # noqa: E402
+from src.pipeline.sam2_video_tracker import (  # noqa: E402
+    Sam2Unavailable,
+    is_enabled as sam2_video_enabled,
+    propagate_selected_players,
+)
+from src.pipeline.selected_player_reid import SelectedPlayerReId  # noqa: E402
 from src.showcase.exclusions import (  # noqa: E402
     filter_detections,
     load_exclusion_set,
@@ -175,9 +188,12 @@ def _write_tracking_csv(path: Path, rows: list[dict]) -> None:
         "box_width",
         "box_height",
         "has_mask",
+        "selection_locked",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(
+            handle, fieldnames=fieldnames, extrasaction="ignore"
+        )
         writer.writeheader()
         writer.writerows(rows)
 
@@ -398,6 +414,54 @@ def _resolve_selected_person_groups(
     return selected, track_to_group
 
 
+def _selection_seed_boxes(
+    selected_players: list[dict] | None,
+    selected_group_ids: set[int],
+    frame_records: list[dict],
+    snapshot_frame: int,
+) -> dict[int, list[float]]:
+    """Clicked box per selected person, falling back to the snapshot detection.
+
+    SAM 2 is prompted with exactly what the coach drew a box around; anything
+    else reintroduces the "it started on the wrong player" failure at frame one.
+    """
+    seeds: dict[int, list[float]] = {}
+    for player in selected_players or []:
+        gid = player.get("person_group_id")
+        if gid is None:
+            gid = player.get("track_id")
+        if gid is None or int(gid) not in selected_group_ids:
+            continue
+        if player.get("x1") is None:
+            continue
+        seeds[int(gid)] = [
+            float(player["x1"]),
+            float(player["y1"]),
+            float(player["x2"]),
+            float(player["y2"]),
+        ]
+
+    missing = selected_group_ids - set(seeds)
+    if not missing:
+        return seeds
+
+    snapshot_record = None
+    for record in frame_records:
+        if int(record.get("frame_number", -1)) == int(snapshot_frame):
+            snapshot_record = record
+            break
+    for det in (snapshot_record or {}).get("tracks") or []:
+        gid = det.get("person_group_id")
+        if gid is None:
+            gid = det.get("track_id")
+        if gid is None or int(gid) not in missing:
+            continue
+        box = det.get("bbox_xyxy") or []
+        if len(box) >= 4:
+            seeds[int(gid)] = [float(v) for v in box[:4]]
+    return seeds
+
+
 def render_selected_tracks(
     job_dir: str | Path,
     selected_track_ids: list[int] | None = None,
@@ -462,16 +526,19 @@ def render_selected_tracks(
                 or []
             ):
                 gid = int(group["person_group_id"])
+                # Load jersey meta for *all* groups so lock scoring can read
+                # color on handoff targets that no longer carry the selected gid.
+                team_meta_by_group[gid] = {
+                    "team_id": group.get("team_id"),
+                    "team_label": group.get("team_label"),
+                    "jersey_color_name": group.get("jersey_color_name"),
+                    "role": group.get("role") or "player",
+                }
                 if gid not in selected_group_ids:
                     continue
                 bgr = group.get("overlay_color_bgr")
                 if bgr and len(bgr) >= 3:
                     color_by_group_id[gid] = (int(bgr[0]), int(bgr[1]), int(bgr[2]))
-                team_meta_by_group[gid] = {
-                    "team_id": group.get("team_id"),
-                    "team_label": group.get("team_label"),
-                    "jersey_color_name": group.get("jersey_color_name"),
-                }
         except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError):
             pass
     for player in selected_players or []:
@@ -492,6 +559,7 @@ def render_selected_tracks(
                 "team_id": player.get("team_id"),
                 "team_label": player.get("team_label"),
                 "jersey_color_name": player.get("jersey_color_name"),
+                "role": player.get("role") or "player",
             }
 
     cap = cv2.VideoCapture(str(video_path))
@@ -524,100 +592,196 @@ def render_selected_tracks(
     start = time.perf_counter()
     expected_frames = max(int(canonical.get("source_frame_count") or 0), 1)
     last_progress_emit = 0.0
-    _progress(
-        "rendering_preview",
-        0.15,
-        f"Building focused + segmentation previews (0 / {expected_frames})…",
+
+    # Load the full canonical track timeline, then lock onto the bodies clicked
+    # in the snapshot (prevents ByteTrack ID handoffs).
+    _progress("loading_tracks", 0.12, "Locking selected bodies across the clip…")
+    frame_records: list[dict] = []
+    with gzip.open(tracks_path, "rt", encoding="utf-8") as handle:
+        for line in handle:
+            frame_records.append(json.loads(line))
+
+    # Prefer the snapshot the user actually clicked (snapshot.json), not a
+    # stale summary value — wrong frame + click boxes = wrong bodies at t=0.
+    snapshot_frame = None
+    snap_path = artifact_dir / "snapshot.json"
+    if snap_path.is_file():
+        try:
+            snap_payload = json.loads(snap_path.read_text(encoding="utf-8"))
+            if snap_payload.get("snapshot_frame_number") is not None:
+                snapshot_frame = int(snap_payload["snapshot_frame_number"])
+        except (OSError, ValueError, json.JSONDecodeError, TypeError):
+            snapshot_frame = None
+    if snapshot_frame is None:
+        for player in selected_players or []:
+            if player.get("snapshot_frame_number") is not None:
+                snapshot_frame = int(player["snapshot_frame_number"])
+                break
+    if snapshot_frame is None and canonical.get("snapshot_frame_number") is not None:
+        snapshot_frame = int(canonical["snapshot_frame_number"])
+    snapshot_frame = int(snapshot_frame or 0)
+
+    reid = SelectedPlayerReId()
+    reid_embeddings = 0
+    locked: dict[int, dict[int, dict]] | None = None
+    lock_backend = "osnet_reid+spatial"
+    sam2_stats: dict | None = None
+    sam2_error: str | None = None
+
+    # Primary path: SAM 2 video propagation carries one mask memory per clicked
+    # body, so a defender pressed against a target cannot inherit the label.
+    seeds = _selection_seed_boxes(
+        selected_players, selected_group_ids, frame_records, snapshot_frame
     )
+    if sam2_video_enabled() and len(seeds) == len(selected_group_ids):
+        _progress("loading_tracks", 0.13, "Locking selected players with SAM 2…")
+
+        def _sam2_progress(fraction: float, detail: str) -> None:
+            _progress("loading_tracks", 0.13 + 0.34 * float(fraction), detail)
+
+        try:
+            locked, sam2_stats = propagate_selected_players(
+                video_path=video_path,
+                frame_records=frame_records,
+                snapshot_frame_number=snapshot_frame,
+                seeds=seeds,
+                labels=label_by_group_id,
+                reid=reid,
+                progress_cb=_sam2_progress,
+            )
+            lock_backend = "sam2_video+osnet_reid"
+        except Sam2Unavailable as exc:
+            sam2_error = str(exc)
+            locked = None
+            print(f"[track_players] SAM 2 video unavailable: {exc}", flush=True)
+        except Exception as exc:  # noqa: BLE001 - Confirm must still produce a clip
+            sam2_error = f"{type(exc).__name__}: {exc}"
+            locked = None
+            print(f"[track_players] SAM 2 video propagation failed: {exc}", flush=True)
+    elif sam2_video_enabled():
+        sam2_error = "Missing a clicked box for at least one selected player."
+
+    if locked is None:
+        # Fallback: deep-ReID features on every candidate body, then the
+        # spatial/appearance lock decides ownership frame by frame.
+        _progress("loading_tracks", 0.16, "Building player identity references…")
+        appearance_cap = cv2.VideoCapture(str(video_path))
+        if appearance_cap.isOpened():
+            try:
+                for index, frame_record in enumerate(frame_records):
+                    ok, image = appearance_cap.read()
+                    if not ok:
+                        break
+                    tracks = list(frame_record.get("tracks") or [])
+                    enrich_tracks_with_appearance(image, tracks)
+                    reid_embeddings += reid.embed_detections(image, tracks)
+                    if index and index % 30 == 0:
+                        _progress(
+                            "loading_tracks",
+                            0.16 + 0.20 * min(index / max(len(frame_records), 1), 1.0),
+                            "Reading deep player identity features…",
+                        )
+            finally:
+                appearance_cap.release()
+
+        locked = lock_selected_bodies(
+            frame_records,
+            snapshot_frame_number=snapshot_frame,
+            selected_group_ids=selected_group_ids,
+            selected_players=selected_players,
+            label_by_group_id=label_by_group_id,
+            team_meta_by_group=team_meta_by_group,
+            frame_width=width,
+            frame_height=height,
+        )
+
+    locked_records = build_locked_frame_records(
+        frame_records, locked, selected_group_ids
+    )
+    locked_path = artifact_dir / "locked_tracks.jsonl.gz"
+    write_locked_tracks_jsonl(locked_path, locked_records)
+
     try:
-        with gzip.open(tracks_path, "rt", encoding="utf-8") as handle:
-            for line in handle:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frame_record = json.loads(line)
-                tracked = []
-                for det in frame_record.get("tracks", []):
-                    tid = int(det.get("track_id", -1))
-                    gid = det.get("person_group_id")
-                    if gid is None:
-                        gid = tid
-                    gid = int(gid)
-                    enriched = dict(det)
-                    enriched["person_group_id"] = gid
-                    if gid not in selected_group_ids:
-                        continue
-                    tracked.append(enriched)
-                if tracked:
-                    frames_with_selected += 1
-                frame_number = int(frame_record["frame_number"])
-                timestamp = float(frame_record.get("timestamp_seconds") or 0.0)
-                for det in tracked:
-                    track_id = int(det["track_id"])
-                    gid = int(det["person_group_id"])
-                    x1, y1, x2, y2 = [
-                        int(v) for v in det.get("bbox_xyxy", [0, 0, 0, 0])[:4]
-                    ]
-                    meta = team_meta_by_group.get(gid) or {}
-                    stance_x, stance_y, position_source = stance_point_from_mask(
-                        det.get("mask_polygon"),
-                        [x1, y1, x2, y2],
-                    )
-                    rows.append(
-                        {
-                            "frame_number": frame_number,
-                            "timestamp_seconds": timestamp,
-                            "player_label": label_by_group_id[gid],
-                            "track_id": track_id,
-                            "person_group_id": gid,
-                            "team_id": meta.get("team_id"),
-                            "team_label": meta.get("team_label"),
-                            "jersey_color_name": meta.get("jersey_color_name"),
-                            "confidence": round(
-                                float(det.get("confidence") or 0.0), 4
-                            ),
-                            "x1": x1,
-                            "y1": y1,
-                            "x2": x2,
-                            "y2": y2,
-                            "center_x": round((x1 + x2) / 2, 2),
-                            "center_y": round((y1 + y2) / 2, 2),
-                            "stance_x": round(stance_x, 2),
-                            "stance_y": round(stance_y, 2),
-                            "position_source": position_source,
-                            "box_width": x2 - x1,
-                            "box_height": y2 - y1,
-                            "has_mask": bool(det.get("mask_polygon")),
-                        }
-                    )
-                annotated = frame.copy()
-                _draw_tracked_frame(
-                    annotated, tracked, label_by_group_id, color_by_group_id
+        for frame_record in locked_records:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_number = int(frame_record["frame_number"])
+            timestamp = float(frame_record.get("timestamp_seconds") or 0.0)
+            tracked = []
+            for det in (locked.get(frame_number) or {}).values():
+                enriched = dict(det)
+                enriched["person_group_id"] = int(det["person_group_id"])
+                tracked.append(enriched)
+            if tracked:
+                frames_with_selected += 1
+            for det in tracked:
+                track_id = int(det.get("track_id", -1))
+                gid = int(det["person_group_id"])
+                x1, y1, x2, y2 = [
+                    int(v) for v in det.get("bbox_xyxy", [0, 0, 0, 0])[:4]
+                ]
+                meta = team_meta_by_group.get(gid) or {}
+                stance_x, stance_y, position_source = stance_point_from_mask(
+                    det.get("mask_polygon"),
+                    [x1, y1, x2, y2],
                 )
-                writer.write(annotated)
-                masks_frame = frame.copy()
-                _draw_tracked_frame(
-                    masks_frame,
-                    tracked,
-                    label_by_group_id,
-                    color_by_group_id,
-                    draw_style="masks",
+                rows.append(
+                    {
+                        "frame_number": frame_number,
+                        "timestamp_seconds": timestamp,
+                        "player_label": label_by_group_id[gid],
+                        "track_id": track_id,
+                        "person_group_id": gid,
+                        "team_id": meta.get("team_id"),
+                        "team_label": meta.get("team_label"),
+                        "jersey_color_name": meta.get("jersey_color_name"),
+                        "confidence": round(
+                            float(det.get("confidence") or 0.0), 4
+                        ),
+                        "x1": x1,
+                        "y1": y1,
+                        "x2": x2,
+                        "y2": y2,
+                        "center_x": round((x1 + x2) / 2, 2),
+                        "center_y": round((y1 + y2) / 2, 2),
+                        "stance_x": round(stance_x, 2),
+                        "stance_y": round(stance_y, 2),
+                        "position_source": position_source,
+                        "box_width": x2 - x1,
+                        "box_height": y2 - y1,
+                        "has_mask": bool(det.get("mask_polygon")),
+                        "selection_locked": True,
+                    }
                 )
-                masks_writer.write(masks_frame)
-                frames_rendered += 1
-                frac = frames_rendered / max(expected_frames, 1)
-                progress_val = 0.15 + 0.55 * min(frac, 1.0)
-                if (
-                    progress_val - last_progress_emit >= 0.03
-                    or frames_rendered >= expected_frames
-                ):
-                    last_progress_emit = progress_val
-                    _progress(
-                        "rendering_preview",
-                        progress_val,
-                        f"Building focused + segmentation previews "
-                        f"({frames_rendered} / {expected_frames})…",
-                    )
+            annotated = frame.copy()
+            _draw_tracked_frame(
+                annotated, tracked, label_by_group_id, color_by_group_id
+            )
+            writer.write(annotated)
+            masks_frame = frame.copy()
+            _draw_tracked_frame(
+                masks_frame,
+                tracked,
+                label_by_group_id,
+                color_by_group_id,
+                draw_style="masks",
+            )
+            masks_writer.write(masks_frame)
+            frames_rendered += 1
+            frac = frames_rendered / max(expected_frames, 1)
+            progress_val = 0.50 + 0.20 * min(frac, 1.0)
+            if (
+                progress_val - last_progress_emit >= 0.03
+                or frames_rendered >= expected_frames
+            ):
+                last_progress_emit = progress_val
+                _progress(
+                    "rendering_preview",
+                    progress_val,
+                    f"Building focused + segmentation previews "
+                    f"({frames_rendered} / {expected_frames})…",
+                )
     finally:
         cap.release()
         writer.release()
@@ -654,6 +818,7 @@ def render_selected_tracks(
         except (OSError, json.JSONDecodeError):
             possession_payload = {}
     _progress("coach_insights", 0.88, "Computing Matchup Outcomes…")
+    play_outcome_payload = load_play_outcome(artifact_dir)
     coach_insights = compute_coach_insights(
         rows,
         source_frame_count=source_frame_count,
@@ -663,6 +828,7 @@ def render_selected_tracks(
         team_meta_by_group=team_meta_by_group,
         primary_pair=primary_pair,
         possession=possession_payload,
+        play_outcome=play_outcome_payload,
     )
     coach_insights_path = artifact_dir / "coach_insights.json"
     coach_insights_path.write_text(
@@ -691,6 +857,12 @@ def render_selected_tracks(
         "total_positions": len(rows),
         "selected_labels": list(label_by_group_id.values()),
         "selected_person_group_ids": sorted(selected_group_ids),
+        "selection_lock": lock_backend,
+        "selection_reid_backend": reid.backend,
+        "selection_reid_embeddings": reid_embeddings,
+        "selection_sam2": sam2_stats,
+        "selection_sam2_error": sam2_error,
+        "locked_tracks_jsonl": str(locked_path.resolve()),
         "track_mapping": {
             label: gid for gid, label in label_by_group_id.items()
         },
@@ -708,6 +880,7 @@ def render_selected_tracks(
         "coach_narrative": coach_narrative,
         "coach_insights_json": str(coach_insights_path.resolve()),
         "possession": possession_payload,
+        "play_outcome": play_outcome_payload,
         "offense_team_id": possession_payload.get("offense_team_id"),
         "defense_team_id": possession_payload.get("defense_team_id"),
         "quality": {
@@ -749,7 +922,10 @@ def run_player_tracking(
     quiet: bool = False,
 ) -> dict:
     """
-    Track user-selected players from the snapshot frame through the end of the clip.
+    Track user-selected players across the full clip.
+
+    Snapshot frame only locks selected boxes → track IDs. Overlays/CSV cover
+    every frame those IDs appear (including before the snapshot).
 
     Returns paths and summary stats for API / CLI use.
     """
@@ -819,6 +995,59 @@ def run_player_tracking(
     frames_exported = 0
     mask_memory: dict[int, list[list[float]]] = {}
     pipeline_start = time.perf_counter()
+    # Buffer pre-snapshot frames so we can paint selected IDs from clip start
+    # once the snapshot lock is known (ByteTrack IDs are stable across the pass).
+    pending_frames: list[tuple[object, list[dict], int, float]] = []
+
+    def _export_frame(
+        frame_bgr,
+        tracked_dets: list[dict],
+        frame_number: int,
+        timestamp_seconds: float,
+    ) -> None:
+        nonlocal frames_exported
+        for det in tracked_dets:
+            track_id = int(det.get("track_id", -1))
+            label = label_by_track_id.get(track_id)
+            if label is None:
+                continue
+
+            box = det.get("bbox_xyxy") or [0, 0, 0, 0]
+            x1, y1, x2, y2 = [int(v) for v in box[:4]]
+            confidence = round(float(det.get("confidence") or 0.0), 4)
+            center_x = round((x1 + x2) / 2, 2)
+            center_y = round((y1 + y2) / 2, 2)
+            stance_x, stance_y, position_source = stance_point_from_mask(
+                det.get("mask_polygon"),
+                [x1, y1, x2, y2],
+            )
+
+            track_rows.append(
+                {
+                    "frame_number": frame_number,
+                    "timestamp_seconds": timestamp_seconds,
+                    "player_label": label,
+                    "track_id": track_id,
+                    "confidence": confidence,
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                    "center_x": center_x,
+                    "center_y": center_y,
+                    "stance_x": round(stance_x, 2),
+                    "stance_y": round(stance_y, 2),
+                    "position_source": position_source,
+                    "box_width": x2 - x1,
+                    "box_height": y2 - y1,
+                    "has_mask": bool(det.get("mask_polygon")),
+                }
+            )
+
+        frames_exported += 1
+        annotated = frame_bgr.copy()
+        _draw_tracked_frame(annotated, tracked_dets, label_by_track_id)
+        writer.write(annotated)
 
     frame_number = 0
     while True:
@@ -854,52 +1083,16 @@ def run_player_tracking(
                 raise RuntimeError(
                     "Could not match any selected players to tracker IDs at the snapshot frame."
                 )
-
-        if frame_number >= anchor_frame and label_by_track_id:
-            for det in tracked:
-                track_id = int(det.get("track_id", -1))
-                label = label_by_track_id.get(track_id)
-                if label is None:
-                    continue
-
-                box = det.get("bbox_xyxy") or [0, 0, 0, 0]
-                x1, y1, x2, y2 = [int(v) for v in box[:4]]
-                confidence = round(float(det.get("confidence") or 0.0), 4)
-                center_x = round((x1 + x2) / 2, 2)
-                center_y = round((y1 + y2) / 2, 2)
-                stance_x, stance_y, position_source = stance_point_from_mask(
-                    det.get("mask_polygon"),
-                    [x1, y1, x2, y2],
-                )
-
-                track_rows.append(
-                    {
-                        "frame_number": frame_number,
-                        "timestamp_seconds": timestamp_seconds,
-                        "player_label": label,
-                        "track_id": track_id,
-                        "confidence": confidence,
-                        "x1": x1,
-                        "y1": y1,
-                        "x2": x2,
-                        "y2": y2,
-                        "center_x": center_x,
-                        "center_y": center_y,
-                        "stance_x": round(stance_x, 2),
-                        "stance_y": round(stance_y, 2),
-                        "position_source": position_source,
-                        "box_width": x2 - x1,
-                        "box_height": y2 - y1,
-                        "has_mask": bool(det.get("mask_polygon")),
-                    }
-                )
-
-            frames_exported += 1
-            annotated = frame.copy()
-            _draw_tracked_frame(annotated, tracked, label_by_track_id)
-            writer.write(annotated)
+            for pending_frame, pending_tracked, pending_fn, pending_ts in pending_frames:
+                _export_frame(pending_frame, pending_tracked, pending_fn, pending_ts)
+            pending_frames.clear()
+            _export_frame(frame, tracked, frame_number, timestamp_seconds)
+        elif not label_by_track_id:
+            pending_frames.append(
+                (frame.copy(), list(tracked), frame_number, timestamp_seconds)
+            )
         else:
-            writer.write(frame)
+            _export_frame(frame, tracked, frame_number, timestamp_seconds)
 
     cap.release()
     writer.release()
@@ -938,7 +1131,10 @@ def run_player_tracking(
     summary["summary_json"] = str(summary_json_path.resolve())
 
     if not quiet:
-        print(f"Tracked {len(label_by_track_id)} player(s) from frame {anchor_frame}.")
+        print(
+            f"Tracked {len(label_by_track_id)} player(s) across full clip "
+            f"(locked at snapshot frame {anchor_frame})."
+        )
         print(f"  Positions exported: {len(track_rows)}")
         print(f"  Tracks CSV:         {tracks_csv_path.resolve()}")
         print(f"  Tracking video:     {tracking_video_path.resolve()}")

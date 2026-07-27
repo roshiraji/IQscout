@@ -1,4 +1,4 @@
-﻿# ScoutIQ desktop-style app launcher.
+# ScoutIQ desktop-style app launcher.
 # Starts API + React hidden, shows a splash while booting, opens an app window,
 # and stops everything when that window is closed (or Quit is pressed).
 
@@ -444,9 +444,12 @@ try {
 
     if ($browserExe) {
         New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+        # Full-screen app window by default (Edge/Chrome app mode).
         $browserProc = Start-Process -FilePath $browserExe -ArgumentList @(
             "--app=$reactUrl",
             "--user-data-dir=$profileDir",
+            "--start-fullscreen",
+            "--start-maximized",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-extensions"

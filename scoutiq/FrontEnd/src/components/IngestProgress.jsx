@@ -4,7 +4,9 @@ const INGEST_STEPS = [
   { id: "queue", label: "Queue job", match: ["queued"] },
   { id: "model", label: "Load model", match: ["loading_model"] },
   { id: "track", label: "Track players", match: ["tracking"] },
+  { id: "encode", label: "Encode preview", match: ["encoding"] },
   { id: "stitch", label: "Stitch IDs", match: ["stitching"] },
+  { id: "snapshot", label: "Build snapshot", match: ["snapshot"] },
   { id: "ball", label: "Ball / possession", match: ["ball_tracking"] },
   { id: "ready", label: "Ready to select", match: ["ready", "ready_partial_smoke_test"] },
 ];
@@ -15,7 +17,9 @@ const STAGE_ORDER = [
   "queued",
   "loading_model",
   "tracking",
+  "encoding",
   "stitching",
+  "snapshot",
   "ball_tracking",
   "ready",
   "ready_partial_smoke_test",
@@ -29,14 +33,14 @@ function stageIndex(stage) {
 function formatIngestDetail(job, isBusy, ingestPhase, selectedFileName) {
   if (isBusy && ingestPhase === "uploading") {
     return selectedFileName
-      ? `Uploading ${selectedFileName}…`
-      : "Uploading video…";
+      ? `Uploading ${selectedFileName}...`
+      : "Uploading video...";
   }
   if (isBusy && ingestPhase === "validating") {
-    return "Checking duration, resolution, and FPS…";
+    return "Checking duration, resolution, and FPS...";
   }
   if (!job) {
-    return isBusy ? "Starting ingest…" : "";
+    return isBusy ? "Starting ingest..." : "";
   }
   if (job.status === "failed") {
     return "Full-clip tracking could not finish.";
@@ -46,21 +50,58 @@ function formatIngestDetail(job, isBusy, ingestPhase, selectedFileName) {
     const total = job.result?.source_frame_count ?? job.total_frames;
     return `Full-clip tracking ready${
       frames != null && total != null ? ` (${frames} / ${total} frames)` : ""
-    }. Pick players below.`;
+    }. Continue to Select.`;
   }
   const stage = job.stage || job.status;
   const map = {
-    queued: "Waiting for the tracking worker…",
-    loading_model: "Loading player segmentation weights…",
-    tracking: "Detecting and tracking players across the clip…",
-    stitching: "Stitching tracklets into stable person groups…",
-    ball_tracking: "Running ball / possession pass…",
+    queued: "Waiting for the tracking worker...",
+    loading_model: "Loading player segmentation weights...",
+    tracking: "Detecting and tracking players across the clip...",
+    encoding: "Encoding browser preview (still working)...",
+    stitching: "Stitching tracklets into stable person groups...",
+    snapshot: "Building selection snapshot...",
+    ball_tracking: "Running ball / possession pass...",
   };
   const base = map[stage] || String(stage).replace(/_/g, " ");
-  if (job.frames_processed != null && job.total_frames) {
-    return `${base} (${job.frames_processed} / ${job.total_frames})`;
+  if (
+    stage === "tracking" &&
+    job.frames_processed != null &&
+    job.total_frames
+  ) {
+    return `${base} (${job.frames_processed} / ${job.total_frames} frames)`;
   }
   return base;
+}
+
+/**
+ * Overall bar: never show 100% until job.status === "ready".
+ * Backend now weights stages; frontend still caps as a safety net.
+ */
+function resolveIngestProgress(job, isBusy, ingestPhase, ready) {
+  if (ready) return 1;
+  if (isBusy) {
+    return ingestPhase === "validating" ? 0.08 : 0.04;
+  }
+  if (!job) return 0;
+
+  const raw = Number(job.progress);
+  if (Number.isFinite(raw) && raw >= 0) {
+    return Math.min(Math.max(raw, 0), 0.99);
+  }
+
+  // Fallback if an older API omits weighted progress.
+  const stage = job.stage || job.status || "queued";
+  const idx = stageIndex(stage);
+  const base = idx / Math.max(STAGE_ORDER.length - 1, 1);
+  if (
+    stage === "tracking" &&
+    job.frames_processed != null &&
+    job.total_frames
+  ) {
+    const frameFrac = job.frames_processed / Math.max(job.total_frames, 1);
+    return Math.min(0.05 + frameFrac * 0.63, 0.68);
+  }
+  return Math.min(base, 0.99);
 }
 
 /**
@@ -100,14 +141,13 @@ function IngestProgress({
             ? "failed"
             : job?.status || "queued");
 
-  const progress = isBusy
-    ? ingestPhase === "validating"
-      ? 0.12
-      : 0.05
-    : Math.max(0, Math.min(1, Number(job?.progress ?? (ready ? 1 : 0))));
-  const percent = Math.round(progress * 100);
+  const progress = resolveIngestProgress(job, isBusy, ingestPhase, ready);
+  const percent = ready ? 100 : Math.min(99, Math.round(progress * 100));
   const detail = formatIngestDetail(job, isBusy, ingestPhase, selectedFileName);
   const currentIdx = stageIndex(stage === "failed" ? "queued" : stage);
+  const postTrack =
+    !ready &&
+    ["encoding", "stitching", "snapshot", "ball_tracking"].includes(stage);
 
   return (
     <div
@@ -123,8 +163,8 @@ function IngestProgress({
           : ready
             ? "Ingest complete"
             : isBusy
-              ? "Ingesting video…"
-              : "Analyzing clip…"}
+              ? "Ingesting video..."
+              : "Analyzing clip..."}
       </h2>
       <p className="status-text">{detail}</p>
 
@@ -132,12 +172,18 @@ function IngestProgress({
         <>
           <div className="confirm-progress-meter">
             <progress
-              value={ready ? 1 : progress}
+              value={progress}
               max="1"
               aria-label="Video ingest progress"
             />
-            <strong>{ready ? 100 : percent}%</strong>
+            <strong>{percent}%</strong>
           </div>
+          {postTrack && (
+            <p className="status-text ingest-posttrack-note">
+              Frame tracking finished — finishing encode, ID stitch, snapshot, and
+              ball. Progress stays under 100% until selection unlocks.
+            </p>
+          )}
           <ol className="confirm-stage-list">
             {INGEST_STEPS.map((step) => {
               const stepIdx = Math.min(...step.match.map((s) => stageIndex(s)));
@@ -168,8 +214,8 @@ function IngestProgress({
           </ol>
           {tracking && !ready && (
             <p className="status-text">
-              Selection unlocks after the full-clip model pass finishes. Keep this
-              tab open — progress updates live.
+              Selection unlocks only when this reaches 100% and status is Ready.
+              Keep this tab open — progress updates live.
             </p>
           )}
         </>

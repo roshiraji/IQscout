@@ -81,6 +81,8 @@ def encode_for_browser(video_path: Path, *, quiet: bool = False) -> Path:
         # Help any transitive imageio calls in this process.
         os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg_exe
 
+        threads = str(os.environ.get("SCOUTIQ_ENCODE_THREADS") or "0")
+        preset = str(os.environ.get("SCOUTIQ_ENCODE_PRESET") or "veryfast")
         temp_path = video_path.with_suffix(".browser.mp4")
         result = subprocess.run(
             [
@@ -90,8 +92,20 @@ def encode_for_browser(video_path: Path, *, quiet: bool = False) -> Path:
                 str(video_path),
                 "-c:v",
                 "libx264",
+                "-preset",
+                preset,
                 "-pix_fmt",
                 "yuv420p",
+                # Frequent keyframes so browsers show overlays from t=0 instead of
+                # staying blank until the first mid-clip keyframe.
+                "-g",
+                "30",
+                "-keyint_min",
+                "30",
+                "-sc_threshold",
+                "0",
+                "-threads",
+                threads,
                 "-movflags",
                 "+faststart",
                 "-an",

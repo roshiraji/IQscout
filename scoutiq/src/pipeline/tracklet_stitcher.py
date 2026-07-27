@@ -112,14 +112,22 @@ def _sample_appearance(
         try:
             # Optional soft dependency; color hist remains the default path.
             import torch
-            from torchreid.utils import FeatureExtractor  # type: ignore
+            from torchreid.reid.utils import FeatureExtractor  # type: ignore
 
             target = f"cuda:{device}" if str(device).isdigit() else str(device)
             if target.startswith("cuda") and not torch.cuda.is_available():
                 target = "cpu"
+            weights = (
+                Path(__file__).resolve().parents[2]
+                / "models"
+                / "reid"
+                / "osnet_x0_25_market1501.pth"
+            )
+            if not weights.is_file():
+                raise FileNotFoundError(f"Missing ReID weights: {weights}")
             osnet = FeatureExtractor(
                 model_name="osnet_x0_25",
-                model_path="",
+                model_path=str(weights),
                 device=target,
             )
             appearance_backend = "osnet_x0_25+color_hist"

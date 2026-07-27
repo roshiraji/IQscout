@@ -19,6 +19,7 @@ from src.analytics.trajectories import (
     generate_trajectories_for_job,
     load_team_lookup,
     resolve_frame_size,
+    resolve_tracks_path,
     split_path_fragments,
 )
 
@@ -49,7 +50,46 @@ def test_load_team_lookup_from_person_groups_payload(tmp_path: Path):
         ),
         encoding="utf-8",
     )
-    assert load_team_lookup(path) == {7: 1, 8: None, 9: None}
+    assert load_team_lookup(path) == {
+        7: {
+            "team_id": 1,
+            "jersey_color_name": None,
+            "team_label": None,
+            "role": "player",
+        },
+        8: {
+            "team_id": None,
+            "jersey_color_name": None,
+            "team_label": None,
+            "role": "player",
+        },
+        9: {
+            "team_id": None,
+            "jersey_color_name": None,
+            "team_label": None,
+            "role": "player",
+        },
+    }
+
+
+def test_load_team_lookup_infers_team_from_jersey(tmp_path: Path):
+    path = tmp_path / "person_groups.json"
+    path.write_text(
+        json.dumps(
+            {
+                "person_groups": [
+                    {"person_group_id": 1, "jersey_color_name": "red"},
+                    {"person_group_id": 2, "jersey_color_name": "Blue", "team_id": None},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    lookup = load_team_lookup(path)
+    assert lookup[1]["team_id"] == 0
+    assert lookup[1]["jersey_color_name"] == "red"
+    assert lookup[2]["team_id"] == 1
+    assert lookup[2]["jersey_color_name"] == "blue"
 
 
 def test_build_trajectories_groups_by_person_group_id_and_skips_bad_rows():
@@ -119,6 +159,217 @@ def test_build_trajectories_groups_by_person_group_id_and_skips_bad_rows():
     assert summary["missing_data"]["missing_person_group_id"] == 1
     assert summary["missing_data"]["invalid_bbox"] == 1
     assert summary["missing_data"]["skipped_detections"] == 2
+
+
+def test_resolve_tracks_path_prefers_locked_tracks_when_present(tmp_path: Path):
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    (job_dir / "tracks.jsonl.gz").write_bytes(b"")
+    assert resolve_tracks_path(job_dir) == job_dir / "tracks.jsonl.gz"
+
+    (job_dir / "locked_tracks.jsonl.gz").write_bytes(b"")
+    assert resolve_tracks_path(job_dir) == job_dir / "locked_tracks.jsonl.gz"
+
+    # Explicit override always wins.
+    assert resolve_tracks_path(job_dir, "tracks.jsonl.gz") == job_dir / "tracks.jsonl.gz"
+
+
+def test_build_trajectories_prefers_mask_stance_point_over_bbox_bottom():
+    # A mask with most points near the top of the box but a small cluster of
+    # "feet" pixels lower than the box bottom-center would predict.
+    mask_polygon = [
+        [140, 60],
+        [160, 62],
+        [150, 61],
+        [145, 58],
+        [148, 100],
+        [152, 100],
+        [150, 99],
+    ]
+    frames = [
+        {
+            "frame_number": 0,
+            "timestamp_seconds": 0.0,
+            "tracks": [
+                {
+                    "person_group_id": 1,
+                    "bbox_xyxy": [100, 50, 200, 100],
+                    "mask_polygon": mask_polygon,
+                },
+            ],
+        }
+    ]
+    trajectories, summary = build_trajectories(frames, frame_width=1000, frame_height=500)
+    point = trajectories[0]["points"][0]
+    # bbox bottom-center would be (150, 100); mask stance should land close to
+    # the lowest mask points, near (150, 99.7).
+    assert point["point_source"] == "mask_bottom"
+    assert point["x"] == pytest.approx(150.0, abs=1.0)
+    assert point["y"] < 100.0
+    assert summary["mask_stance_points"] == 1
+    assert summary["bbox_fallback_points"] == 0
+
+
+def test_build_trajectories_falls_back_to_bbox_without_mask():
+    frames = [
+        {
+            "frame_number": 0,
+            "timestamp_seconds": 0.0,
+            "tracks": [{"person_group_id": 1, "bbox_xyxy": [100, 50, 200, 300]}],
+        }
+    ]
+    trajectories, summary = build_trajectories(frames, frame_width=1000, frame_height=500)
+    point = trajectories[0]["points"][0]
+    assert point["point_source"] == "bbox_bottom"
+    assert point["interpolated"] is False
+    assert summary["mask_stance_points"] == 0
+    assert summary["bbox_fallback_points"] == 1
+
+
+def test_split_path_fragments_interpolates_short_gaps():
+    points = [
+        {
+            "frame": 0,
+            "time_seconds": 0.0,
+            "segment_id": 1,
+            "camera_state": "wide_gameplay",
+            "hoop_side": "right",
+            "usable_for_analytics": True,
+            "x": 0,
+            "y": 0,
+            "x_normalized": 0.0,
+            "y_normalized": 0.0,
+        },
+        {
+            # 4-frame gap (missed detections), same fragment.
+            "frame": 4,
+            "time_seconds": 0.12,
+            "segment_id": 1,
+            "camera_state": "wide_gameplay",
+            "hoop_side": "right",
+            "usable_for_analytics": True,
+            "x": 40,
+            "y": 40,
+            "x_normalized": 0.4,
+            "y_normalized": 0.4,
+        },
+    ]
+    fragments = split_path_fragments(
+        points, max_gap_frames=15, max_interpolate_gap_frames=6
+    )
+    assert len(fragments) == 1
+    frag = fragments[0]
+    assert frag["detected_point_count"] == 2
+    assert frag["point_count"] == 5  # frames 0,1,2,3,4
+    frames_in_order = [p["frame"] for p in frag["points"]]
+    assert frames_in_order == [0, 1, 2, 3, 4]
+    middle = frag["points"][2]
+    assert middle["interpolated"] is True
+    assert middle["x"] == pytest.approx(20.0)
+    assert middle["y"] == pytest.approx(20.0)
+    assert not frag["points"][0].get("interpolated")
+    assert not frag["points"][-1].get("interpolated")
+
+
+def test_split_path_fragments_does_not_interpolate_beyond_threshold():
+    points = [
+        {
+            "frame": 0,
+            "time_seconds": 0.0,
+            "segment_id": 1,
+            "camera_state": "wide_gameplay",
+            "hoop_side": "right",
+            "usable_for_analytics": True,
+            "x": 0,
+            "y": 0,
+            "x_normalized": 0.0,
+            "y_normalized": 0.0,
+        },
+        {
+            # 10-frame gap exceeds max_interpolate_gap_frames (6) but stays
+            # under max_gap_frames (15), so no interpolation, no new fragment.
+            "frame": 10,
+            "time_seconds": 0.33,
+            "segment_id": 1,
+            "camera_state": "wide_gameplay",
+            "hoop_side": "right",
+            "usable_for_analytics": True,
+            "x": 100,
+            "y": 100,
+            "x_normalized": 1.0,
+            "y_normalized": 1.0,
+        },
+    ]
+    fragments = split_path_fragments(
+        points, max_gap_frames=15, max_interpolate_gap_frames=6
+    )
+    assert len(fragments) == 1
+    assert fragments[0]["point_count"] == 2
+    assert fragments[0]["detected_point_count"] == 2
+
+
+def test_split_path_fragments_smooths_per_frame_jitter():
+    # A real player cannot reverse direction every single frame; a wobbling
+    # detection box can. Simulate that sawtooth and confirm the smoothed
+    # trail's amplitude collapses while it still moves in the right
+    # direction overall.
+    ys = [100, 140, 100, 140, 100, 140, 100]
+    points = [
+        {
+            "frame": i,
+            "time_seconds": i / 30.0,
+            "segment_id": 1,
+            "camera_state": "wide_gameplay",
+            "hoop_side": "right",
+            "usable_for_analytics": True,
+            "x": i * 10,
+            "y": y,
+            "x_normalized": i * 10 / 1000.0,
+            "y_normalized": y / 500.0,
+        }
+        for i, y in enumerate(ys)
+    ]
+
+    fragments = split_path_fragments(
+        points,
+        max_gap_frames=15,
+        max_interpolate_gap_frames=6,
+        smoothing_window_frames=5,
+    )
+    assert len(fragments) == 1
+    smoothed_ys = [p["y"] for p in fragments[0]["points"]]
+
+    assert max(ys) - min(ys) == 40
+    assert max(smoothed_ys) - min(smoothed_ys) < 20
+    # Still ends up roughly centered between the two jitter extremes, not
+    # dragged toward either one.
+    assert 105 < sum(smoothed_ys) / len(smoothed_ys) < 125
+
+
+def test_split_path_fragments_smoothing_disabled_when_window_is_one():
+    ys = [100, 140, 100, 140, 100]
+    points = [
+        {
+            "frame": i,
+            "time_seconds": i / 30.0,
+            "segment_id": 1,
+            "camera_state": "wide_gameplay",
+            "hoop_side": "right",
+            "usable_for_analytics": True,
+            "x": i * 10,
+            "y": y,
+            "x_normalized": i * 10 / 1000.0,
+            "y_normalized": y / 500.0,
+        }
+        for i, y in enumerate(ys)
+    ]
+    fragments = split_path_fragments(
+        points,
+        max_gap_frames=15,
+        max_interpolate_gap_frames=6,
+        smoothing_window_frames=1,
+    )
+    assert [p["y"] for p in fragments[0]["points"]] == ys
 
 
 def test_split_path_fragments_breaks_on_segment_change_and_gap():

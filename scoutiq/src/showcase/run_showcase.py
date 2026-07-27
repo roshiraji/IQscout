@@ -76,8 +76,18 @@ def detect_players_seg(
     *,
     conf: float = 0.25,
     iou: float = 0.70,
+    device: str | int | None = None,
+    imgsz: int | None = None,
+    half: bool = False,
 ) -> list[dict]:
-    results = model.predict(image_bgr, conf=conf, iou=iou, verbose=False)
+    predict_kwargs: dict = {"conf": conf, "iou": iou, "verbose": False}
+    if device is not None:
+        predict_kwargs["device"] = device
+    if imgsz is not None:
+        predict_kwargs["imgsz"] = int(imgsz)
+    if half and (device is None or str(device).lower() != "cpu"):
+        predict_kwargs["half"] = True
+    results = model.predict(image_bgr, **predict_kwargs)
     if not results:
         return []
     r0 = results[0]

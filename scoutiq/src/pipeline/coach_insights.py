@@ -54,6 +54,40 @@ OFFENSE_W_SPACING = 0.30
 SEPARATION_SPEED = 0.30
 SEPARATION_MIN_GAP = 0.10
 
+# A coach/user can tag what actually happened on the clip (we don't
+# auto-detect shot make/miss). When tagged, the Offense Grade blends the
+# tagged result with the tracked separation process below; when untagged,
+# both grades fall back to process-only proxies. See
+# ``src.pipeline.play_outcome`` for the storage side of this tag.
+PLAY_OUTCOME_TAGS = ("make", "miss", "foul_drawn", "turnover", "no_shot")
+
+# Offense credit (0-100) for the tagged result — a make is a clear win for
+# the offense regardless of how tight the coverage was; a turnover is a
+# clear loss regardless of how much separation was created earlier.
+OUTCOME_OFFENSE_POINTS: dict[str, float] = {
+    "make": 95.0,
+    "foul_drawn": 82.0,
+    "no_shot": 50.0,
+    "miss": 28.0,
+    "turnover": 8.0,
+}
+
+# Defense credit adjustment (added to the process-based defense score, in
+# points out of 100) — forcing a turnover or a miss is a defensive win even
+# if the process metrics alone under-weight it; conceding a make trims the
+# score a little, but not heavily, since a tight contest can still go in.
+OUTCOME_DEFENSE_ADJUST: dict[str, float] = {
+    "turnover": 16.0,
+    "miss": 8.0,
+    "no_shot": 0.0,
+    "foul_drawn": -4.0,
+    "make": -6.0,
+}
+
+# Blend weights for the offense grade once a play outcome is tagged.
+OUTCOME_WEIGHT = 0.55
+PROCESS_WEIGHT = 0.45
+
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -355,6 +389,90 @@ def _infer_relationship(
     return "opponent"
 
 
+def _tier(score_0_100: float) -> str:
+    """Plain-English tier for a 0-100 grade."""
+    if score_0_100 >= 75:
+        return "high"
+    if score_0_100 >= 45:
+        return "mid"
+    return "low"
+
+
+def _build_outcome_headline(
+    *,
+    relationship: str,
+    tag: str | None,
+    offense_grade_pts: float,
+    defense_grade_pts: float,
+    attacker_label: str,
+    defender_label: str,
+) -> tuple[str, str]:
+    """Plain-English (headline, outcome_summary) for offense/defense grades.
+
+    Combines the tagged result (if any) with the tier of each grade so a
+    non-coach reads "scored despite good coverage" while the numbers behind
+    it still separate result from process.
+    """
+    off_tier = _tier(offense_grade_pts)
+    def_tier = _tier(defense_grade_pts)
+
+    if relationship != "opponent" or tag is None:
+        headline = "Offense vs Defense grades — process-based estimate (no play result tagged)."
+        summary = (
+            f"{attacker_label} Offense Grade {round(offense_grade_pts)}/100 · "
+            f"{defender_label} Defense Grade {round(defense_grade_pts)}/100 "
+            "(estimated from separation/contest — tag the play result for a sharper grade)."
+        )
+        return headline, summary
+
+    result_phrase = {
+        "make": "scored",
+        "miss": "missed the shot",
+        "foul_drawn": "drew a shooting foul",
+        "turnover": "turned it over",
+        "no_shot": "didn't get a shot off",
+    }.get(tag, "finished the play")
+
+    # (result, defense tier) → how the defense is described.
+    defense_phrase_by_tag_and_tier: dict[str, dict[str, str]] = {
+        "make": {
+            "high": "despite tight, well-positioned coverage",
+            "mid": "with only moderate resistance",
+            "low": "after the defense lost containment",
+        },
+        "miss": {
+            "high": "under heavy, well-earned pressure",
+            "mid": "with a hand in the way",
+            "low": "on a clean look the defense didn't really contest",
+        },
+        "foul_drawn": {
+            "high": "even though the coverage was solid — a tough, live-ball foul",
+            "mid": "on contact that could have been avoided",
+            "low": "on a careless, unnecessary foul",
+        },
+        "turnover": {
+            "high": "forced by relentless, disciplined pressure",
+            "mid": "with some help from the defense",
+            "low": "on an unforced error — the defense didn't create this one",
+        },
+        "no_shot": {
+            "high": "smothered before a shot ever went up",
+            "mid": "with the defense staying attached",
+            "low": "even though the defense gave up space",
+        },
+    }
+    defense_phrase = defense_phrase_by_tag_and_tier.get(tag, {}).get(def_tier, "")
+
+    headline = f"{attacker_label} {result_phrase} {defense_phrase}.".replace("  ", " ")
+    summary = (
+        f"{attacker_label} Offense Grade {round(offense_grade_pts)}/100 "
+        f"({result_phrase}). "
+        f"{defender_label} Defense Grade {round(defense_grade_pts)}/100 "
+        f"({def_tier} coverage quality)."
+    )
+    return headline, summary
+
+
 def _build_matchup_scorecard(
     *,
     relationship: str,
@@ -372,6 +490,7 @@ def _build_matchup_scorecard(
     attacker_label: str | None = None,
     label_a: str | None = None,
     label_b: str | None = None,
+    play_outcome: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Always emit numeric performance scores when distance data exists."""
     shared = max(float(shared_seconds), 0.5)
@@ -426,6 +545,36 @@ def _build_matchup_scorecard(
     close_pct = round(pct_near * 100)
     open_pct = round(pct_open * 100)
 
+    tag = None
+    outcome_note = None
+    if isinstance(play_outcome, dict):
+        candidate = play_outcome.get("tag")
+        if candidate in PLAY_OUTCOME_TAGS:
+            tag = str(candidate)
+            outcome_note = play_outcome.get("note")
+
+    # Defense grade is always process-based (contest quality doesn't need a
+    # tagged result), nudged by the tag when one exists — e.g. a forced
+    # turnover is defensive credit even if the separation numbers were close.
+    defense_grade_process = stay_close_score
+    defense_grade = defense_grade_process
+    if tag is not None:
+        adjust = OUTCOME_DEFENSE_ADJUST.get(tag, 0.0) / 100.0
+        defense_grade = _clamp01(defense_grade_process + adjust)
+
+    # Offense grade blends the tagged result (what actually happened) with
+    # the separation process (how it got there) once a result is tagged;
+    # otherwise it is the same process-only proxy as before.
+    offense_grade_process = create_space_score
+    offense_grade = offense_grade_process
+    grading_mode = "process_only"
+    if tag is not None:
+        outcome_points = OUTCOME_OFFENSE_POINTS.get(tag, 50.0) / 100.0
+        offense_grade = _clamp01(
+            OUTCOME_WEIGHT * outcome_points + PROCESS_WEIGHT * offense_grade_process
+        )
+        grading_mode = "outcome_plus_process"
+
     if relationship == "same_team":
         mode = "offense_spacing"
         pressure_index = stay_close_score
@@ -440,18 +589,17 @@ def _build_matchup_scorecard(
             f"spacing {round(spacing * 100)})."
         )
     else:
-        # Opponent OR unknown team: always score the gap battle.
+        # Opponent OR unknown team: independent offense / defense grades.
         mode = "matchup_outcomes"
-        pressure_index = stay_close_score
-        offense_index = create_space_score
-        headline = (
-            "Matchup outcome scores — Stay Close vs Create Space."
-        )
-        outcome_summary = (
-            f"{def_lab} Stay Close {round(stay_close_score * 100)}/100 "
-            f"(attached {close_pct}% of contested time). "
-            f"{att_lab} Create Space {round(create_space_score * 100)}/100 "
-            f"(separated {open_pct}% of contested time)."
+        pressure_index = defense_grade
+        offense_index = offense_grade
+        headline, outcome_summary = _build_outcome_headline(
+            relationship=relationship,
+            tag=tag,
+            offense_grade_pts=offense_grade * 100.0,
+            defense_grade_pts=defense_grade * 100.0,
+            attacker_label=att_lab,
+            defender_label=def_lab,
         )
 
     return {
@@ -460,14 +608,20 @@ def _build_matchup_scorecard(
         "outcome_summary": outcome_summary,
         "pressure_index": _round(pressure_index),
         "offense_index": _round(offense_index),
-        "stay_close_score": _round(stay_close_score),
-        "create_space_score": _round(create_space_score),
+        "offense_grade": _round(offense_grade),
+        "defense_grade": _round(defense_grade),
+        "grading_mode": grading_mode,
+        "play_outcome_tag": tag,
+        "play_outcome_note": outcome_note,
+        # Legacy field names kept for older clients / stored jobs.
+        "stay_close_score": _round(defense_grade_process),
+        "create_space_score": _round(offense_grade_process),
         "off_ball_score": _round(off_ball_score),
         "primary_score": _round(
-            off_ball_score if relationship == "same_team" else stay_close_score
+            off_ball_score if relationship == "same_team" else defense_grade
         ),
         "secondary_score": _round(
-            None if relationship == "same_team" else create_space_score
+            None if relationship == "same_team" else offense_grade
         ),
         "defender_label": def_lab,
         "attacker_label": att_lab,
@@ -485,8 +639,15 @@ def _build_matchup_scorecard(
             "spacing_quality": _round(spacing),
         },
         "disclaimer": (
-            "Numeric clip scores from stance distance. "
-            "Create Space = got away, not points scored."
+            "Offense Grade blends the tagged play result with separation/contest "
+            "process once tagged; Defense Grade is contest quality, nudged by the "
+            "result. Untagged clips show process-only estimates for both."
+            if tag is not None
+            else (
+                "Process-only estimate from stance distance — tag what happened "
+                "on this play (Make / Miss / Foul drawn / Turnover / No shot) "
+                "for a result-aware grade."
+            )
         ),
     }
 
@@ -502,6 +663,7 @@ def compute_pairwise_metrics(
     source_frame_count: int,
     frame_diagonal: float,
     possession: dict[str, Any] | None = None,
+    play_outcome: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pairwise separation, closeouts, chase / sticky / screen / cut alignment."""
     meta_a = meta_a or {}
@@ -741,6 +903,7 @@ def compute_pairwise_metrics(
         attacker_label=attacker_label,
         label_a=label_a,
         label_b=label_b,
+        play_outcome=play_outcome,
     )
     scorecard["role_source"] = role_source
     scorecard["roles_confident"] = bool(roles_confident and role_source != "geometry_proxy")
@@ -846,50 +1009,39 @@ def build_coach_narrative(insights: dict[str, Any]) -> str:
     close_n = int(closes.get("count") or 0)
     sep_n = int(seps.get("count") or 0)
 
-    if scorecard.get("outcome_summary"):
-        parts = [str(scorecard["outcome_summary"])]
+    if scorecard.get("headline"):
+        parts = [str(scorecard["headline"])]
     else:
         parts = [f"{a_lab} vs {b_lab} matchup on this clip."]
 
     if rel == "opponent":
-        stay = scorecard.get("stay_close_score")
-        create = scorecard.get("create_space_score")
-        def_lab = scorecard.get("defender_label") or "Stay-close side"
-        att_lab = scorecard.get("attacker_label") or "Create-space side"
+        offense_grade = scorecard.get("offense_grade")
+        defense_grade = scorecard.get("defense_grade")
+        def_lab = scorecard.get("defender_label") or "Defender"
+        att_lab = scorecard.get("attacker_label") or "Attacker"
         roles_confident = bool(scorecard.get("roles_confident"))
-        if stay is not None and create is not None:
-            if roles_confident:
-                parts = [
-                    f"{def_lab} (defense) Stay Close {round(float(stay) * 100)}/100 - "
-                    f"attached for {near_pct}% of contested time with {close_n} "
-                    f"closeout burst(s).",
-                    f"{att_lab} (offense) Create Space {round(float(create) * 100)}/100 - "
-                    f"separated for {open_pct}% of contested time with {sep_n} "
-                    f"get-away burst(s).",
-                ]
-            else:
-                parts = [
-                    f"{def_lab} earned Stay Close {round(float(stay) * 100)}/100 - "
-                    f"attached for {near_pct}% of contested time with {close_n} "
-                    f"closeout burst(s).",
-                    f"{att_lab} earned Create Space {round(float(create) * 100)}/100 - "
-                    f"separated for {open_pct}% of contested time with {sep_n} "
-                    f"get-away burst(s).",
-                    "Offense/defense not locked — set offense team or wait for ball possession.",
-                ]
-        if stay is not None and create is not None and roles_confident:
-            if float(stay) >= float(create) + 0.08:
-                parts.append(
-                    "Edge: defense held the matchup tighter on this clip."
-                )
-            elif float(create) >= float(stay) + 0.08:
-                parts.append(
-                    "Edge: offense created more separation on this clip."
-                )
-            else:
-                parts.append("Edge: contested — neither side clearly won the gap.")
-        elif stay is not None and create is not None:
-            parts.append("Edge: contested — roles use geometry until possession is confident.")
+        tag = scorecard.get("play_outcome_tag")
+        if offense_grade is not None and defense_grade is not None:
+            role_note = "" if roles_confident else " (roles from geometry, not locked)"
+            parts.append(
+                f"{att_lab} Offense Grade {round(float(offense_grade) * 100)}/100"
+                f"{role_note} — separated for {open_pct}% of contested time with "
+                f"{sep_n} get-away burst(s)."
+            )
+            parts.append(
+                f"{def_lab} Defense Grade {round(float(defense_grade) * 100)}/100 — "
+                f"attached for {near_pct}% of contested time with {close_n} "
+                f"closeout burst(s)."
+            )
+        if tag is None:
+            parts.append(
+                "No play result tagged yet — grades are process-only estimates. "
+                "Tag Make / Miss / Foul drawn / Turnover / No shot for sharper grades."
+            )
+        if not roles_confident:
+            parts.append(
+                "Offense/defense not locked — set offense team or wait for ball possession."
+            )
     elif rel == "same_team":
         screen = primary.get("screen_shape_proxy") or {}
         label = (screen.get("soft_label") or "no_clear_screen_shape").replace(
@@ -920,10 +1072,16 @@ def build_coach_narrative(insights: dict[str, Any]) -> str:
     if inten_bits:
         parts.append("Work rate: " + "; ".join(inten_bits) + ".")
 
-    parts.append(
-        "Scores use stance distance only — create-space means got away, "
-        "not points scored (no ball/shot model yet)."
-    )
+    if rel == "opponent" and scorecard.get("play_outcome_tag"):
+        parts.append(
+            "Offense Grade blends the tagged play result with separation/contest "
+            "process; Defense Grade is contest quality nudged by that result."
+        )
+    else:
+        parts.append(
+            "Scores use stance distance only — separation means got away, "
+            "not points scored, until a play result is tagged."
+        )
     return " ".join(parts)
 
 
@@ -1023,8 +1181,16 @@ def compute_coach_insights(
     team_meta_by_group: dict[int, dict] | None = None,
     primary_pair: tuple[int, int] | None = None,
     possession: dict[str, Any] | None = None,
+    play_outcome: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build full coach_insights payload from selected track rows."""
+    """Build full coach_insights payload from selected track rows.
+
+    ``play_outcome`` is the optional coach/user tag for what happened on
+    this clip (see ``src.pipeline.play_outcome``) — e.g.
+    ``{"tag": "make", "note": "and-1"}``. When present it blends into the
+    primary pair's Offense/Defense grades; otherwise those grades are
+    process-only proxies.
+    """
     label_by_group = label_by_group or {}
     team_meta_by_group = team_meta_by_group or {}
     possession = possession or {}
@@ -1066,6 +1232,7 @@ def compute_coach_insights(
                 source_frame_count=source_frame_count,
                 frame_diagonal=diag,
                 possession=possession,
+                play_outcome=play_outcome,
             )
         )
 
@@ -1104,11 +1271,10 @@ def compute_coach_insights(
             ),
         },
         "non_goals": [
-            "shot_make_miss",
+            "automatic_shot_make_miss_detection",
             "named_identity",
             "calibrated_feet_per_second",
             "help_rotation_without_ball",
-            "true_defensive_rating",
         ],
         "frame_width": frame_width,
         "frame_height": frame_height,
@@ -1126,6 +1292,14 @@ def compute_coach_insights(
             "n_windows": possession.get("n_windows"),
             "windows": possession.get("windows"),
         },
+        "play_outcome": (
+            {
+                "tag": play_outcome.get("tag"),
+                "note": play_outcome.get("note"),
+            }
+            if isinstance(play_outcome, dict) and play_outcome.get("tag") in PLAY_OUTCOME_TAGS
+            else None
+        ),
         "glance": {},
     }
 
@@ -1166,11 +1340,16 @@ def compute_coach_insights(
             "stay_close_score": scorecard.get("stay_close_score"),
             "create_space_score": scorecard.get("create_space_score"),
             "off_ball_score": scorecard.get("off_ball_score"),
+            "offense_grade": scorecard.get("offense_grade"),
+            "defense_grade": scorecard.get("defense_grade"),
+            "grading_mode": scorecard.get("grading_mode"),
+            "play_outcome_tag": scorecard.get("play_outcome_tag"),
             "primary_score": scorecard.get("primary_score"),
             "secondary_score": scorecard.get("secondary_score"),
             "pressure_index": scorecard.get("pressure_index"),
             "offense_index": scorecard.get("offense_index"),
             "scorecard_mode": scorecard.get("mode"),
+            "headline": scorecard.get("headline"),
             "outcome_summary": scorecard.get("outcome_summary"),
             "defender_label": scorecard.get("defender_label"),
             "attacker_label": scorecard.get("attacker_label"),

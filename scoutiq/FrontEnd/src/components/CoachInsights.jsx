@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { setOffenseTeam as apiSetOffenseTeam } from "../API/scoutiqAPI";
+import {
+  setOffenseTeam as apiSetOffenseTeam,
+  setPlayOutcome as apiSetPlayOutcome,
+} from "../API/scoutiqAPI";
+
+const PLAY_OUTCOME_OPTIONS = [
+  { tag: "make", label: "Make" },
+  { tag: "miss", label: "Miss" },
+  { tag: "foul_drawn", label: "Foul drawn" },
+  { tag: "turnover", label: "Turnover" },
+  { tag: "no_shot", label: "No shot" },
+];
 
 function pct(value) {
   if (value == null || Number.isNaN(Number(value))) return "—";
@@ -105,7 +116,72 @@ function GapSparkline({ series, personIds }) {
   );
 }
 
-function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
+function PlayOutcomeControl({ jobId, currentTag, onPlayOutcomeUpdated }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function apply(tag) {
+    if (!jobId || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const payload = await apiSetPlayOutcome(jobId, { tag });
+      if (typeof onPlayOutcomeUpdated === "function") {
+        onPlayOutcomeUpdated(payload);
+      }
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="play-outcome-row">
+      <div className="play-outcome-label">
+        <span>What happened on this play?</span>
+        <span className="status-text play-outcome-hint">
+          We can&apos;t auto-detect makes/misses yet — tag the result for a
+          grade that blends it with the tracked contest.
+        </span>
+      </div>
+      <div className="play-outcome-buttons">
+        {PLAY_OUTCOME_OPTIONS.map((opt) => (
+          <button
+            key={opt.tag}
+            type="button"
+            className={`secondary-button play-outcome-tag${
+              currentTag === opt.tag ? " is-active" : ""
+            }`}
+            disabled={busy}
+            onClick={() => apply(opt.tag)}
+          >
+            {opt.label}
+          </button>
+        ))}
+        {currentTag ? (
+          <button
+            type="button"
+            className="secondary-button play-outcome-clear"
+            disabled={busy}
+            onClick={() => apply(null)}
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
+      {error ? <p className="tracking-warning">{error}</p> : null}
+    </div>
+  );
+}
+
+function CoachInsights({
+  insights,
+  narrative,
+  jobId,
+  onPossessionUpdated,
+  onPlayOutcomeUpdated,
+}) {
   const [overrideBusy, setOverrideBusy] = useState(false);
   const [overrideError, setOverrideError] = useState("");
 
@@ -126,6 +202,11 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
     (primary.labels || glance.players?.map((p) => p.label) || []).join(" vs ") ||
     "Selected pair";
   const possession = insights.possession || {};
+  const playOutcome = insights.play_outcome || null;
+  const currentOutcomeTag =
+    playOutcome?.tag ?? scorecard.play_outcome_tag ?? glance.play_outcome_tag ?? null;
+  const gradingMode = scorecard.grading_mode || glance.grading_mode || "process_only";
+  const headline = scorecard.headline || null;
   const rolesConfident = Boolean(
     scorecard.roles_confident ?? glance.roles_confident
   );
@@ -167,15 +248,19 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
     }
   }
 
-  const stayClose = score100(
-    scorecard.stay_close_score ??
+  const defenseGrade = score100(
+    scorecard.defense_grade ??
+      glance.defense_grade ??
+      scorecard.stay_close_score ??
       glance.stay_close_score ??
       scorecard.pressure_index ??
       glance.pressure_index ??
       0
   );
-  const createSpace = score100(
-    scorecard.create_space_score ??
+  const offenseGrade = score100(
+    scorecard.offense_grade ??
+      glance.offense_grade ??
+      scorecard.create_space_score ??
       glance.create_space_score ??
       scorecard.secondary_score ??
       0
@@ -191,9 +276,9 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
   );
 
   const defenderLabel =
-    scorecard.defender_label || glance.defender_label || "Stay Close";
+    scorecard.defender_label || glance.defender_label || "Defender";
   const attackerLabel =
-    scorecard.attacker_label || glance.attacker_label || "Create Space";
+    scorecard.attacker_label || glance.attacker_label || "Attacker";
 
   // Same jersey color / same team → off-ball score. Otherwise dual matchup scores.
   const showMatchup = !isSameTeam;
@@ -217,12 +302,12 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
           <h2>Matchup Outcomes</h2>
           <p className="status-text scorecard-subhead">
             {isOpponent
-              ? rolesConfident
-                ? "Stay Close = defense · Create Space = offense (ball possession / override)."
-                : "Who won the gap on this clip: stay attached, or create space and get away."
+              ? gradingMode === "outcome_plus_process"
+                ? "Result-aware grade: the tagged play outcome blended with tracked contest quality."
+                : "Process-only estimate from tracked separation — tag the play result below for a sharper grade."
               : isSameTeam
                 ? "Off-ball action on this clip: spacing, pick shape, and cut timing."
-                : "Select opposite-team players for defense/offense outcome scores."}
+                : "Select opposite-team players for offense/defense grades."}
           </p>
           <p className="coach-pair-label">{pairLabel}</p>
         </div>
@@ -230,16 +315,16 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
         {showMatchup ? (
           <div className="scorecard-hero-pair">
             <OutcomeHero
-              label={defenderLabel}
-              score={stayClose}
-              subtitle={rolesConfident ? "Stay Close · defense" : "Stay Close"}
-              tone={scoreTone(stayClose)}
+              label={attackerLabel}
+              score={offenseGrade}
+              subtitle={rolesConfident ? "Offense Grade" : "Offense Grade (unlocked role)"}
+              tone={scoreTone(offenseGrade)}
             />
             <OutcomeHero
-              label={attackerLabel}
-              score={createSpace}
-              subtitle={rolesConfident ? "Create Space · offense" : "Create Space"}
-              tone={scoreTone(createSpace)}
+              label={defenderLabel}
+              score={defenseGrade}
+              subtitle={rolesConfident ? "Defense Grade" : "Defense Grade (unlocked role)"}
+              tone={scoreTone(defenseGrade)}
             />
           </div>
         ) : (
@@ -251,6 +336,24 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
           />
         )}
       </div>
+
+      {headline ? <p className="coach-headline">{headline}</p> : null}
+
+      {isOpponent && jobId ? (
+        <PlayOutcomeControl
+          jobId={jobId}
+          currentTag={currentOutcomeTag}
+          onPlayOutcomeUpdated={(payload) => {
+            if (typeof onPlayOutcomeUpdated === "function") {
+              onPlayOutcomeUpdated(payload);
+            } else if (typeof onPossessionUpdated === "function") {
+              // Fall back to the shared insights-refresh callback so this
+              // still works if the parent hasn't wired the new prop yet.
+              onPossessionUpdated(payload);
+            }
+          }}
+        />
+      ) : null}
 
       {jobId ? (
         <div className="offense-override-row">
@@ -348,22 +451,22 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
 
       <div className="scorecard-body">
         <div className="scorecard-components">
-          <h3>{isOpponent ? "Why these scores" : "Action breakdown"}</h3>
+          <h3>{isOpponent ? "Why these grades" : "Action breakdown"}</h3>
           {isOpponent ? (
             <>
-              <ComponentBar label="Time attached" value={components.time_attached} />
+              <ComponentBar label="Time attached (defense)" value={components.time_attached} />
               <ComponentBar
-                label="Very tight stretches"
+                label="Very tight stretches (defense)"
                 value={components.time_very_tight}
               />
-              <ComponentBar label="Closeout activity" value={components.closeout_activity} />
-              <ComponentBar label="Time separated" value={components.time_separated} />
+              <ComponentBar label="Closeout activity (defense)" value={components.closeout_activity} />
+              <ComponentBar label="Time separated (offense)" value={components.time_separated} />
               <ComponentBar
-                label="Get-away bursts"
+                label="Get-away bursts (offense)"
                 value={components.separation_bursts}
               />
               <ComponentBar
-                label="Max separation stretch"
+                label="Max separation stretch (offense)"
                 value={components.max_gap_stretch}
               />
             </>
@@ -378,7 +481,7 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
             </>
           ) : (
             <p className="status-text">
-              Opposite-team pairs unlock Stay Close vs Create Space scores.
+              Opposite-team pairs unlock Offense vs Defense grades.
             </p>
           )}
         </div>
@@ -418,13 +521,20 @@ function CoachInsights({ insights, narrative, jobId, onPossessionUpdated }) {
 
       <p className="scorecard-disclaimer">
         {scorecard.disclaimer ||
-          "Create Space means got away on distance — not points scored. Shot make/miss needs a ball model."}
+          "Process-only estimate from stance distance — tag a play result for a sharper grade."}
       </p>
 
       <details className="coach-details">
         <summary>Raw detail stats</summary>
         <div className="coach-detail-block">
           <ul>
+            {isOpponent && (
+              <li>
+                Grading: {gradingMode === "outcome_plus_process"
+                  ? `result-aware (tagged ${currentOutcomeTag?.replace("_", " ")})`
+                  : "process-only (no play result tagged)"}
+              </li>
+            )}
             <li>
               Mean / max gap: {num(sep.mean_gap_norm)} / {num(sep.max_gap_norm)}{" "}
               diag

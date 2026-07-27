@@ -74,7 +74,16 @@ def load_pipeline_config(config_path: str | Path | None = None) -> dict:
         "weights": "outputs/training_loop/best_player_seg.pt",
         "conf": 0.25,
         "iou": 0.70,
-        "device": "0",
+        "device": "auto",
+        "performance": {
+            "mode": "auto",
+            "pull": "hard",
+            "torch_threads": "auto",
+            "opencv_threads": "auto",
+            "half": "auto",
+            "imgsz": "auto",
+            "warmup": True,
+        },
         "exclusions_dir": "data/exclusions",
         "mask_overlay": True,
         "mask_smooth_alpha": 0.35,
@@ -131,8 +140,8 @@ def load_pipeline_config(config_path: str | Path | None = None) -> dict:
             "enabled": False,
             "weights": "outputs/training_loop_ball/best_ball_det.pt",
             "conf": 0.25,
-            "device": "cpu",
-            "every_n_frames": 1,
+            "device": "auto",
+            "every_n_frames": "auto",
             "hsv_fallback": True,
             "track": {
                 "iou_threshold": 0.15,
@@ -159,20 +168,30 @@ def load_pipeline_config(config_path: str | Path | None = None) -> dict:
                 },
             },
         },
+        "isolate": {
+            "mode": "auto",
+            "ai_working_side": "auto",
+        },
     }
     if path.is_file():
         loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         defaults.update({k: v for k, v in loaded.items() if v is not None or k == "max_frames"})
     else:
         logger.warning("Config %s not found — using built-in defaults.", path)
-    return defaults
+
+    from src.pipeline.hardware import apply_hardware_to_config
+
+    return apply_hardware_to_config(defaults)
 
 
 def _apply_device(model, device: str | None) -> None:
     """Best-effort move the YOLO model onto the requested device."""
-    if not device or str(device).lower() in ("auto", ""):
+    from src.pipeline.hardware import resolve_device
+
+    resolved = resolve_device(device)
+    if not resolved:
         return
-    target = f"cuda:{device}" if str(device).isdigit() else str(device)
+    target = f"cuda:{resolved}" if str(resolved).isdigit() else str(resolved)
     try:
         model.to(target)
     except Exception as exc:  # noqa: BLE001 — device hints are non-fatal
@@ -232,6 +251,10 @@ def run_player_seg_tracking(
     conf = float(cfg["conf"])
     iou = float(cfg["iou"])
     device = str(cfg.get("device", "0"))
+    perf = dict(cfg.get("performance") or {})
+    half = bool(perf.get("half", False)) and str(device).lower() != "cpu"
+    imgsz = int(perf.get("imgsz") or 640)
+    do_warmup = bool(perf.get("warmup", True))
     mask_overlay = bool(cfg.get("mask_overlay", True))
     mask_smooth_alpha = float(cfg.get("mask_smooth_alpha", 0.35)) if mask_overlay else 0.0
     min_track_frames = int(cfg.get("min_track_frames", 3))
@@ -252,13 +275,23 @@ def run_player_seg_tracking(
 
     model = YOLO(str(weights))
     _apply_device(model, device)
+    if do_warmup:
+        from src.pipeline.hardware import warmup_yolo_model
+
+        warmed = warmup_yolo_model(model, device=device, imgsz=imgsz, half=half)
+        if warmed and not quiet:
+            print(f"[player_track] GPU/CPU warmup ok (imgsz={imgsz} half={half})")
 
     logger.info(
-        "Player-seg tracking | video=%s | weights=%s | device=%s | conf=%.2f iou=%.2f | exclusions=%s",
-        video.name, weights.name, device, conf, iou, excl_path or "defaults",
+        "Player-seg tracking | video=%s | weights=%s | device=%s half=%s imgsz=%d | "
+        "conf=%.2f iou=%.2f | exclusions=%s",
+        video.name, weights.name, device, half, imgsz, conf, iou, excl_path or "defaults",
     )
     if not quiet:
-        print(f"[player_track] weights={weights} device={device} conf={conf} iou={iou}")
+        print(
+            f"[player_track] weights={weights} device={device} half={half} "
+            f"imgsz={imgsz} conf={conf} iou={iou}"
+        )
 
     stem = video.stem
     if output_dir is not None:
@@ -371,7 +404,15 @@ def run_player_seg_tracking(
                     cut_frames.append(frame_id)
             previous_probe = probe
 
-            dets = detect_players_seg(model, image, conf=conf, iou=iou)
+            dets = detect_players_seg(
+                model,
+                image,
+                conf=conf,
+                iou=iou,
+                device=device,
+                imgsz=imgsz,
+                half=half,
+            )
             dets = filter_detections(dets, exclusions, class_names=("player",))
             tracked = tracker.update(dets)
 
@@ -479,16 +520,18 @@ def run_player_seg_tracking(
     cap.release()
     writer.release()
 
-    # mp4v -> browser-safe H.264.
+    # mp4v -> browser-safe H.264 (often a long quiet gap after "last frame").
+    if progress_callback:
+        progress_callback(0, 1, "encoding")
     if tmp_video.is_file():
         tmp_video.replace(tracking_video_path)
     try:
         encode_for_browser(tracking_video_path, quiet=quiet)
     except Exception as exc:  # noqa: BLE001 — encoding must never fail the job
         logger.warning("Browser encode skipped after tracking: %s", exc)
-
     if progress_callback:
-        progress_callback(frames_processed, total_frames, "stitching")
+        progress_callback(1, 1, "encoding")
+        progress_callback(0, 1, "stitching")
 
     stitch_payload = stitch_tracklets(
         tracks_jsonl_path,
@@ -534,6 +577,10 @@ def run_player_seg_tracking(
     if track_to_group:
         annotate_tracks_jsonl(tracks_jsonl_path, track_to_group)
         _rewrite_tracks_csv(tracks_csv_path, tracks_jsonl_path, track_to_group)
+
+    if progress_callback:
+        progress_callback(1, 1, "stitching")
+        progress_callback(0, 1, "snapshot")
 
     snapshot_payload = _build_group_snapshot(
         video=video,
@@ -650,12 +697,15 @@ def run_player_seg_tracking(
         encoding="utf-8",
     )
 
+    if progress_callback:
+        progress_callback(1, 1, "snapshot")
+
     ball_summary = None
     possession_summary = None
     ball_cfg = cfg.get("ball") or {}
     if bool(ball_cfg.get("enabled", False)):
         if progress_callback:
-            progress_callback(frames_processed, total_frames, "ball_tracking")
+            progress_callback(0, 1, "ball_tracking")
         try:
             from src.ball.live import infer_possession_for_job, run_ball_tracking_on_video
 
@@ -674,10 +724,16 @@ def run_player_seg_tracking(
                 artifact_dir,
                 possession_cfg=ball_cfg.get("possession") or {},
             )
+            if progress_callback:
+                progress_callback(1, 1, "ball_tracking")
         except Exception as exc:  # noqa: BLE001 — ball must never fail Analyze
             logger.warning("Ball / possession pass soft-failed: %s", exc)
             ball_summary = {"enabled": True, "error": str(exc)}
             possession_summary = {"offense_team_id": None, "source": "error"}
+            if progress_callback:
+                progress_callback(1, 1, "ball_tracking")
+    elif progress_callback:
+        progress_callback(1, 1, "ball_tracking")
 
     runtime = round(time.perf_counter() - start, 2)
     summary = {
@@ -846,7 +902,7 @@ def _build_group_snapshot(
 
     jcfg = {
         "enabled": True,
-        "top_frame_fraction": 0.92,
+        "top_frame_fraction": 0.80,
         "max_candidate_frames": 12,
         **(jersey_cfg or {}),
     }
@@ -892,7 +948,10 @@ def _build_group_snapshot(
                     blue_n = n
             # Prefer true 5v5-style splits over "everyone red".
             balance = 1.0 - abs(red_n - blue_n) / max(red_n + blue_n, 1)
-            rank = sep * 20.0 + balance * 30.0 + len(dets)
+            # Prefer earlier frames so Select/preview doesn't jump to mid-clip.
+            last_frame = max((fid for fid, _, _ in frame_scores), default=1)
+            early_bonus = 28.0 * (1.0 - float(frame_id) / max(float(last_frame), 1.0))
+            rank = sep * 20.0 + balance * 30.0 + len(dets) + early_bonus
             if best_frame is None or rank > best_rank:
                 best_rank = rank
                 best_frame = frame_id

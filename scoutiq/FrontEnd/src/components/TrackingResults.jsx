@@ -17,22 +17,42 @@ function TrackingResults({
   onNewSelection,
   jobId,
   onPossessionUpdated,
+  onPlayOutcomeUpdated,
   seekTime = null,
   seekNonce = 0,
 }) {
   const [previewMode, setPreviewMode] = useState("full"); // "full" | "masks" | "isolate"
   const videoRef = useRef(null);
 
+  const isolationAvailable =
+    Boolean(isolatedVideoUrl) && tracking?.isolation_available !== false;
+  const masksAvailable = Boolean(masksVideoUrl);
+  const activeVideoUrl =
+    previewMode === "isolate" && isolationAvailable
+      ? isolatedVideoUrl
+      : previewMode === "masks" && masksAvailable
+        ? masksVideoUrl
+        : videoUrl;
+
+  const snapshotSeek =
+    seekTime != null && Number.isFinite(Number(seekTime))
+      ? Number(seekTime)
+      : Number(tracking?.timestamp_seconds);
+
   useEffect(() => {
     const el = videoRef.current;
-    if (!el || seekTime == null || !Number.isFinite(Number(seekTime))) return;
-    try {
-      el.currentTime = Math.max(0, Number(seekTime));
-    } catch {
-      // Ignore seek before metadata.
-    }
-  }, [seekTime, seekNonce]);
-
+    if (!el || !Number.isFinite(snapshotSeek)) return undefined;
+    const apply = () => {
+      try {
+        el.currentTime = Math.max(0, snapshotSeek);
+      } catch {
+        // Ignore seek before metadata.
+      }
+    };
+    apply();
+    el.addEventListener("loadedmetadata", apply);
+    return () => el.removeEventListener("loadedmetadata", apply);
+  }, [snapshotSeek, seekNonce, activeVideoUrl]);
 
   if (!tracking) {
     return null;
@@ -49,9 +69,6 @@ function TrackingResults({
     ?? tracking.quality?.unique_raw_tracks;
   const personGroups = tracking.unique_person_groups
     ?? tracking.quality?.unique_person_groups;
-  const isolationAvailable =
-    Boolean(isolatedVideoUrl) && tracking.isolation_available !== false;
-  const masksAvailable = Boolean(masksVideoUrl);
   const isolateBusy = ["queued", "processing"].includes(isolateStatus?.status);
   const isolateProgress = Math.round((isolateStatus?.progress || 0) * 100);
   const isolationMode =
@@ -65,12 +82,6 @@ function TrackingResults({
   const isolateButtonLabel = isolateBusy
     ? `${isolateBaseLabel} · ${isolateProgress > 0 ? `${isolateProgress}%` : formatEta(isolateStatus?.eta_seconds)}`
     : isolateBaseLabel;
-  const activeVideoUrl =
-    previewMode === "isolate" && isolationAvailable
-      ? isolatedVideoUrl
-      : previewMode === "masks" && masksAvailable
-        ? masksVideoUrl
-        : videoUrl;
 
   return (
     <>
@@ -89,10 +100,10 @@ function TrackingResults({
         </div>
         <p className="status-text">
           {reusedCanonical
-            ? `Following ${trackLabels.join(", ")} across the full clip via stitched person groups. Change the snapshot checkboxes and Confirm again to rebuild this focused preview — no full Analyze rerun.`
+            ? `Following ${trackLabels.join(", ")} across the full clip. Spatial lock keeps each pick on the body you clicked (resists ID handoffs). Change checkboxes and Confirm again to rebuild — no full Analyze rerun.`
             : isAuto
             ? `Auto-tracked ${trackLabels.length} player(s) with the segmentation model (${tracking.model || "best_player_seg.pt"}) across the clip.`
-            : `Following ${trackLabels.join(", ")} from frame ${tracking.snapshot_frame_number} through the end of the clip, with segmentation masks from ${tracking.model || "best_player_seg.pt"}.`}
+            : `Following ${trackLabels.join(", ")} across the full clip with segmentation masks from ${tracking.model || "best_player_seg.pt"} (opens at snapshot frame ${tracking.snapshot_frame_number}; spatial lock sticks to the bodies you clicked).`}
         </p>
 
         <div className="metadata-grid">
@@ -251,6 +262,7 @@ function TrackingResults({
         narrative={tracking.coach_narrative}
         jobId={jobId}
         onPossessionUpdated={onPossessionUpdated}
+        onPlayOutcomeUpdated={onPlayOutcomeUpdated}
       />
     </>
   );

@@ -16,9 +16,34 @@ from src.pipeline.player_track_pipeline import JOBS_DIR, run_player_seg_tracking
 
 logger = logging.getLogger(__name__)
 
+# Progress never reaches 1.0 until status=ready. Frame tracking alone used to
+# report 100% while encode / stitch / ball still had minutes of work left.
+_STAGE_PROGRESS_BANDS: dict[str, tuple[float, float]] = {
+    "queued": (0.0, 0.02),
+    "loading_model": (0.02, 0.05),
+    "tracking": (0.05, 0.68),
+    "encoding": (0.68, 0.76),
+    "stitching": (0.76, 0.86),
+    "snapshot": (0.86, 0.90),
+    "ball_tracking": (0.90, 0.98),
+    "ready": (1.0, 1.0),
+    "ready_partial_smoke_test": (1.0, 1.0),
+}
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _stage_progress(stage: str, current: int, total: int) -> float:
+    """Map stage + within-stage fraction into a global 0..1 bar (capped < 1 until ready)."""
+    lo, hi = _STAGE_PROGRESS_BANDS.get(str(stage), (0.05, 0.98))
+    if stage in {"ready", "ready_partial_smoke_test"}:
+        return 1.0
+    frac = min(max(current, 0) / max(total, 1), 1.0)
+    value = lo + (hi - lo) * frac
+    # Keep a visible gap below 100% for any in-flight stage.
+    return round(min(value, 0.99), 4)
 
 
 class TrackingJobManager:
@@ -105,12 +130,18 @@ class TrackingJobManager:
 
     def get(self, job_id: str) -> dict | None:
         path = self.jobs_dir / Path(job_id).name / "job.json"
-        if not path.is_file():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
+        # A network-mapped Windows workspace can briefly expose no file or a
+        # half-written final-fallback while the worker publishes progress.
+        # Treat that as a short read retry, not a permanently missing job.
+        for attempt in range(5):
+            try:
+                if path.is_file():
+                    return json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pass
+            if attempt < 4:
+                time.sleep(0.03 * (attempt + 1))
+        return None
 
     def artifact_dir(self, job_id: str) -> Path:
         return self.jobs_dir / Path(job_id).name
@@ -237,14 +268,19 @@ class TrackingJobManager:
             stage=stage,
             frames_processed=current,
             total_frames=total,
-            progress=round(current / max(total, 1), 4),
+            progress=_stage_progress(stage, current, total),
         )
 
     def _run(self) -> None:
         while True:
             job_id, video, game_context, max_frames = self._queue.get()
             try:
-                self._update(job_id, status="tracking", stage="loading_model")
+                self._update(
+                    job_id,
+                    status="tracking",
+                    stage="loading_model",
+                    progress=_stage_progress("loading_model", 0, 1),
+                )
                 result = run_player_seg_tracking(
                     video,
                     output_dir=self.artifact_dir(job_id),

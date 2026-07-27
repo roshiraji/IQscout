@@ -6,17 +6,62 @@ import {
   getJobTrajectories,
   jobFileUrl,
 } from "../API/scoutiqAPI";
+import PlayheadScrubber from "./PlayheadScrubber";
+import { formatClock } from "./VideoScrubber";
 
 const TEAM_COLORS = {
   0: "#e74c3c",
   1: "#3498db",
 };
 
+function teamIdOf(row) {
+  const raw = row?.team_id;
+  if (raw === 0 || raw === 1) return raw;
+  if (raw === "0" || raw === "1") return Number(raw);
+  const jersey = String(row?.jersey_color_name || "").trim().toLowerCase();
+  if (jersey === "red") return 0;
+  if (jersey === "blue") return 1;
+  return null;
+}
+
 function teamColor(teamId, personGroupId) {
-  if (teamId === 0 || teamId === 1) return TEAM_COLORS[teamId];
+  const id = teamId === "0" || teamId === "1" ? Number(teamId) : teamId;
+  if (id === 0 || id === 1) return TEAM_COLORS[id];
   const palette = ["#f1c40f", "#2ecc71", "#9b59b6", "#e67e22", "#1abc9c", "#ecf0f1"];
   const idx = Math.abs(Number(personGroupId) || 0) % palette.length;
   return palette[idx];
+}
+
+function idsForMode(players, mode, confirmSelectedIds = []) {
+  if (mode === "all") {
+    return players.map((row) => Number(row.person_group_id));
+  }
+  if (mode === "team_red") {
+    return players
+      .filter((row) => teamIdOf(row) === 0)
+      .map((row) => Number(row.person_group_id));
+  }
+  if (mode === "team_blue") {
+    return players
+      .filter((row) => teamIdOf(row) === 1)
+      .map((row) => Number(row.person_group_id));
+  }
+  // "Selected" = Confirm picks when available, else whatever the user checked.
+  if (Array.isArray(confirmSelectedIds) && confirmSelectedIds.length) {
+    const allowed = new Set(confirmSelectedIds.map(Number));
+    return players
+      .map((row) => Number(row.person_group_id))
+      .filter((gid) => allowed.has(gid));
+  }
+  return [];
+}
+
+function playerMatchesSelection(row, mode, selectedIds) {
+  const gid = Number(row.person_group_id);
+  if (mode === "all") return true;
+  if (mode === "team_red") return teamIdOf(row) === 0;
+  if (mode === "team_blue") return teamIdOf(row) === 1;
+  return selectedIds.includes(gid);
 }
 
 function collectFragments(playerRow) {
@@ -123,8 +168,13 @@ function TrajectoryViewer({
   enabled = false,
   focusEvent = null,
   onGenerateComplete,
+  masksImageUrl = "",
+  playVideoUrl = "",
+  masksVideoUrl = "",
+  confirmSelectedIds = null,
 }) {
   const canvasRef = useRef(null);
+  const videoRef = useRef(null);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState([]);
@@ -148,24 +198,43 @@ function TrajectoryViewer({
   const [variant, setVariant] = useState("analytics");
   const [highlightIds, setHighlightIds] = useState([]);
   const [focusMarker, setFocusMarker] = useState(null);
+  const [bgMode, setBgMode] = useState("masks"); // labels | masks — prefer no boxes
+  const [playhead, setPlayhead] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const playTimerRef = useRef(null);
+  const videoDrivenRef = useRef(false);
 
   const frameWidth = summary?.frame_width || 1280;
   const frameHeight = summary?.frame_height || 720;
   const duration = Number(summary?.duration_seconds) || 0;
+  const masksAvailable = Boolean(masksImageUrl);
+  const activePlayUrl =
+    bgMode === "masks" && masksVideoUrl
+      ? masksVideoUrl
+      : playVideoUrl;
+  const hasPlayVideo = Boolean(activePlayUrl);
 
-  const loadBackground = useCallback((id) => {
-    setBgReady(false);
-    const img = new Image();
-    img.onload = () => {
-      bgImageRef.current = img;
-      setBgReady(true);
-    };
-    img.onerror = () => {
-      bgImageRef.current = null;
-      setBgReady(true);
-    };
-    img.src = jobFileUrl(id, "snapshot");
-  }, []);
+  useEffect(() => {
+    setIsPlaying(false);
+  }, [activePlayUrl]);
+
+  const loadBackground = useCallback(
+    (id, mode = bgMode) => {
+      setBgReady(false);
+      const img = new Image();
+      img.onload = () => {
+        bgImageRef.current = img;
+        setBgReady(true);
+      };
+      img.onerror = () => {
+        bgImageRef.current = null;
+        setBgReady(true);
+      };
+      const useMasks = mode === "masks" && masksImageUrl;
+      img.src = useMasks ? masksImageUrl : jobFileUrl(id, "snapshot");
+    },
+    [bgMode, masksImageUrl]
+  );
 
   const loadExisting = useCallback(
     async (id, nextVariant = variant) => {
@@ -173,17 +242,18 @@ function TrajectoryViewer({
         getJobTrajectories(id, nextVariant),
         getJobSegments(id),
       ]);
+      const rows = traj.trajectories || [];
       setSummary(traj.summary || null);
-      setPlayers(traj.trajectories || []);
+      setPlayers(rows);
       setSegments(segs.segments || []);
       const dur = Number(traj.summary?.duration_seconds) || 0;
       setTimeStart(0);
       setTimeEnd(dur);
-      setSelectedIds(
-        (traj.trajectories || []).map((p) => Number(p.person_group_id))
-      );
+      setPlayhead(0);
+      setIsPlaying(false);
       setStatus("ready");
       setError("");
+      return rows;
     },
     [variant]
   );
@@ -196,7 +266,7 @@ function TrajectoryViewer({
     try {
       const result = await generateJobTrajectories(jobId);
       setWarnings(result.warnings || []);
-      loadBackground(jobId);
+      loadBackground(jobId, bgMode);
       await loadExisting(jobId, variant);
       if (typeof onGenerateComplete === "function") {
         onGenerateComplete(result);
@@ -205,7 +275,14 @@ function TrajectoryViewer({
       setStatus("error");
       setError(err.message || "Trajectory generation failed.");
     }
-  }, [jobId, loadBackground, loadExisting, variant, onGenerateComplete]);
+  }, [
+    jobId,
+    loadBackground,
+    loadExisting,
+    variant,
+    bgMode,
+    onGenerateComplete,
+  ]);
 
   useEffect(() => {
     if (!focusEvent) return;
@@ -227,8 +304,11 @@ function TrajectoryViewer({
     if (Number.isFinite(t0)) {
       const pad = 1.5;
       const dur = Number(summary?.duration_seconds) || Math.max(t1, t0) + pad;
-      setTimeStart(Math.max(0, t0 - pad));
-      setTimeEnd(Math.min(dur, (Number.isFinite(t1) ? t1 : t0) + pad));
+      const start = Math.max(0, t0 - pad);
+      const end = Math.min(dur, (Number.isFinite(t1) ? t1 : t0) + pad);
+      setTimeStart(start);
+      setTimeEnd(end);
+      setPlayhead(Number.isFinite(t1) ? t1 : t0);
       setFocusMarker({ t: t0, ids });
     }
     setShowEvents(true);
@@ -243,7 +323,7 @@ function TrajectoryViewer({
     (async () => {
       setStatus("loading");
       setError("");
-      loadBackground(jobId);
+      loadBackground(jobId, bgMode);
       try {
         await loadExisting(jobId, variant);
         if (cancelled) return;
@@ -262,36 +342,191 @@ function TrajectoryViewer({
     return () => {
       cancelled = true;
     };
-  }, [enabled, jobId, loadBackground, loadExisting, variant]);
+    // bgMode is handled by its own effect once ready — don't re-fetch JSON on toggle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, jobId, loadExisting, variant]);
+
+  // Reload the canvas background when Boxes ↔ Segmentation toggles.
+  useEffect(() => {
+    if (!enabled || !jobId || status !== "ready") return;
+    loadBackground(jobId, bgMode);
+  }, [bgMode, enabled, jobId, status, loadBackground]);
+
+  // Keep the active filter's ID set in sync whenever players reload or the
+  // Confirm selection changes. Custom mode is owned by the checkboxes.
+  useEffect(() => {
+    if (status !== "ready") return;
+    if (selectionMode === "custom") return;
+    setSelectedIds(idsForMode(players, selectionMode, confirmSelectedIds));
+  }, [players, selectionMode, confirmSelectedIds, status]);
+
+  const applySelectionMode = useCallback(
+    (mode) => {
+      setSelectionMode(mode);
+      if (mode === "custom") {
+        const seeded = idsForMode(players, "custom", confirmSelectedIds);
+        setSelectedIds(
+          seeded.length
+            ? seeded
+            : players.map((row) => Number(row.person_group_id))
+        );
+      } else {
+        setSelectedIds(idsForMode(players, mode, confirmSelectedIds));
+      }
+      setHighlightIds([]);
+    },
+    [players, confirmSelectedIds]
+  );
 
   const visiblePlayers = useMemo(() => {
-    return players.filter((row) => {
-      const gid = Number(row.person_group_id);
-      const teamId = row.team_id;
-      if (selectionMode === "all") return true;
-      if (selectionMode === "team_red") return teamId === 0;
-      if (selectionMode === "team_blue") return teamId === 1;
-      return selectedIds.includes(gid);
-    });
+    return players.filter((row) =>
+      playerMatchesSelection(row, selectionMode, selectedIds)
+    );
+  }, [players, selectionMode, selectedIds]);
+
+  // Player chips: for team filters only list that team; for Selected only the
+  // checked set. All still lists everyone.
+  const listedPlayers = useMemo(() => {
+    if (selectionMode === "all") return players;
+    if (selectionMode === "team_red" || selectionMode === "team_blue") {
+      return players.filter((row) =>
+        playerMatchesSelection(row, selectionMode, selectedIds)
+      );
+    }
+    if (selectedIds.length) {
+      return players.filter((row) =>
+        selectedIds.includes(Number(row.person_group_id))
+      );
+    }
+    return players;
   }, [players, selectionMode, selectedIds]);
 
   const segmentIdFilter =
     segmentFilter === "all" ? null : Number(segmentFilter);
+
+  // Trails grow with the playhead — only moments up to the head are drawn.
+  const scrubEnd = Math.min(
+    timeEnd,
+    Number.isFinite(playhead) ? playhead : timeEnd
+  );
+  const scrubStart = Math.min(timeStart, scrubEnd);
 
   const filteredDensityPoints = useMemo(() => {
     const points = [];
     for (const row of visiblePlayers) {
       for (const frag of filterFragments(collectFragments(row), {
         segmentId: segmentIdFilter,
-        timeStart,
-        timeEnd,
+        timeStart: scrubStart,
+        timeEnd: scrubEnd,
         analyticsSafeOnly: true,
       })) {
         points.push(...frag.points);
       }
     }
     return points;
-  }, [visiblePlayers, segmentIdFilter, timeStart, timeEnd]);
+  }, [visiblePlayers, segmentIdFilter, scrubStart, scrubEnd]);
+
+  useEffect(() => {
+    if (playhead < scrubStart) setPlayhead(scrubStart);
+    if (playhead > timeEnd) setPlayhead(timeEnd);
+  }, [timeStart, timeEnd, scrubStart, playhead]);
+
+  // Keep the clip locked to the playhead when scrubbing / seeking.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !hasPlayVideo) return;
+    if (videoDrivenRef.current) return;
+    if (!Number.isFinite(playhead)) return;
+    if (Math.abs((Number(video.currentTime) || 0) - playhead) < 0.05) return;
+    try {
+      video.currentTime = Math.max(0, playhead);
+    } catch {
+      // Ignore seeks before metadata is ready.
+    }
+  }, [playhead, hasPlayVideo, activePlayUrl]);
+
+  // Drive the playhead from the real clip while it plays.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !hasPlayVideo) return undefined;
+
+    const onTime = () => {
+      const t = Number(video.currentTime) || 0;
+      videoDrivenRef.current = true;
+      if (t >= timeEnd - 0.04) {
+        video.pause();
+        setIsPlaying(false);
+        setPlayhead(timeEnd);
+      } else if (t < scrubStart) {
+        setPlayhead(scrubStart);
+      } else {
+        setPlayhead(t);
+      }
+      window.requestAnimationFrame(() => {
+        videoDrivenRef.current = false;
+      });
+    };
+    const onEnded = () => {
+      setIsPlaying(false);
+      setPlayhead(timeEnd);
+    };
+    const onPause = () => {
+      if (!videoDrivenRef.current) setIsPlaying(false);
+    };
+
+    video.addEventListener("timeupdate", onTime);
+    video.addEventListener("ended", onEnded);
+    video.addEventListener("pause", onPause);
+    return () => {
+      video.removeEventListener("timeupdate", onTime);
+      video.removeEventListener("ended", onEnded);
+      video.removeEventListener("pause", onPause);
+    };
+  }, [hasPlayVideo, activePlayUrl, timeEnd, scrubStart]);
+
+  // Play / pause the clip (fallback timer only when no video is available).
+  useEffect(() => {
+    const video = videoRef.current;
+    if (hasPlayVideo && video) {
+      if (playTimerRef.current) {
+        window.clearInterval(playTimerRef.current);
+        playTimerRef.current = null;
+      }
+      if (isPlaying) {
+        const playPromise = video.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(() => setIsPlaying(false));
+        }
+      } else {
+        video.pause();
+      }
+      return undefined;
+    }
+
+    if (!isPlaying) {
+      if (playTimerRef.current) {
+        window.clearInterval(playTimerRef.current);
+        playTimerRef.current = null;
+      }
+      return undefined;
+    }
+    playTimerRef.current = window.setInterval(() => {
+      setPlayhead((current) => {
+        const next = current + 0.1;
+        if (next >= timeEnd) {
+          setIsPlaying(false);
+          return timeEnd;
+        }
+        return next;
+      });
+    }, 100);
+    return () => {
+      if (playTimerRef.current) {
+        window.clearInterval(playTimerRef.current);
+        playTimerRef.current = null;
+      }
+    };
+  }, [isPlaying, timeEnd, hasPlayVideo, activePlayUrl]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -302,7 +537,11 @@ function TrajectoryViewer({
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
 
-    if (bgImageRef.current) {
+    if (hasPlayVideo) {
+      // Video sits under the canvas — keep a light dim so marks stay readable.
+      ctx.fillStyle = "rgba(0,0,0,0.18)";
+      ctx.fillRect(0, 0, w, h);
+    } else if (bgImageRef.current) {
       ctx.drawImage(bgImageRef.current, 0, 0, w, h);
       ctx.fillStyle = "rgba(0,0,0,0.28)";
       ctx.fillRect(0, 0, w, h);
@@ -330,11 +569,11 @@ function TrajectoryViewer({
     for (const row of visiblePlayers) {
       const gid = Number(row.person_group_id);
       const isHighlight = highlightIds.includes(gid);
-      const color = teamColor(row.team_id, row.person_group_id);
+      const color = teamColor(teamIdOf(row), row.person_group_id);
       const fragments = filterFragments(collectFragments(row), {
         segmentId: segmentIdFilter,
-        timeStart,
-        timeEnd,
+        timeStart: scrubStart,
+        timeEnd: scrubEnd,
         analyticsSafeOnly: variant === "analytics",
       });
 
@@ -346,6 +585,7 @@ function TrajectoryViewer({
           x: Number(p.x_normalized) * w,
           y: Number(p.y_normalized) * h,
           t: Number(p.time_seconds) || 0,
+          interp: Boolean(p.interpolated),
         }));
 
         if (mapped.length >= 2) {
@@ -359,15 +599,32 @@ function TrajectoryViewer({
             if (highlightIds.length && !isHighlight) {
               alpha *= 0.25;
             }
-            ctx.strokeStyle = color;
-            ctx.globalAlpha = Math.min(1, Math.max(0.15, alpha));
-            ctx.lineWidth = isHighlight ? 3.6 : 2.2;
+            const segAlpha = Math.min(1, Math.max(0.15, alpha));
+            const segInterpolated = a.interp || b.interp;
+            const dash = segInterpolated ? [5, 5] : [];
+            const lineWidth = isHighlight ? 3.6 : 2.2;
+
+            // A light dark halo under the trail keeps it legible over any
+            // court color (e.g. a red team's line over red key/paint).
+            ctx.setLineDash(dash);
+            ctx.strokeStyle = "rgba(0,0,0,0.55)";
+            ctx.globalAlpha = segAlpha;
+            ctx.lineWidth = lineWidth + 1.6;
             ctx.lineJoin = "round";
             ctx.lineCap = "round";
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);
             ctx.lineTo(b.x, b.y);
             ctx.stroke();
+
+            ctx.strokeStyle = color;
+            ctx.globalAlpha = segInterpolated ? segAlpha * 0.85 : segAlpha;
+            ctx.lineWidth = lineWidth;
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
 
             if (showArrows && i % 8 === 0) {
               ctx.globalAlpha = Math.min(1, alpha);
@@ -426,8 +683,8 @@ function TrajectoryViewer({
     visiblePlayers,
     filteredDensityPoints,
     segmentIdFilter,
-    timeStart,
-    timeEnd,
+    scrubStart,
+    scrubEnd,
     showPaths,
     showArrows,
     showHeatmap,
@@ -438,6 +695,7 @@ function TrajectoryViewer({
     focusMarker,
     variant,
     bgReady,
+    hasPlayVideo,
     frameWidth,
     frameHeight,
   ]);
@@ -449,6 +707,7 @@ function TrajectoryViewer({
         ? current.filter((id) => id !== gid)
         : [...current, gid]
     );
+    setHighlightIds([]);
   }
 
   if (!enabled) {
@@ -507,7 +766,8 @@ function TrajectoryViewer({
       {status === "needs_generate" || status === "idle" ? (
         <p className="status-text">
           Click Generate to build segments and trajectories from existing tracking
-          (no YOLO re-run).
+          (no YOLO re-run). After that, Team Red / Team Blue / Selected hide every
+          other trail.
         </p>
       ) : null}
 
@@ -517,6 +777,35 @@ function TrajectoryViewer({
 
       {status === "ready" ? (
         <>
+          <div
+            className="snapshot-view-toggle"
+            role="group"
+            aria-label="Trajectory background mode"
+          >
+            <button
+              type="button"
+              className={`view-toggle-btn ${bgMode === "labels" ? "view-toggle-btn-active" : ""}`}
+              onClick={() => setBgMode("labels")}
+            >
+              Boxes + labels
+            </button>
+            <button
+              type="button"
+              className={`view-toggle-btn ${bgMode === "masks" ? "view-toggle-btn-active" : ""}`}
+              onClick={() => setBgMode("masks")}
+              disabled={!masksVideoUrl && !masksAvailable}
+              title={
+                masksVideoUrl
+                  ? "Play the segmentation-only clip under the marks"
+                  : masksAvailable
+                    ? "Snapshot masks only — Confirm to unlock masks video"
+                    : "Masks not available — re-Analyze the clip"
+              }
+            >
+              Segmentation only
+            </button>
+          </div>
+
           <div className="trajectory-controls">
             <div className="trajectory-control-group">
               <span className="trajectory-control-title">Players</span>
@@ -531,20 +820,30 @@ function TrajectoryViewer({
                     key={value}
                     type="button"
                     className={`secondary-button${selectionMode === value ? " is-active" : ""}`}
-                    onClick={() => setSelectionMode(value)}
+                    onClick={() => applySelectionMode(value)}
                   >
                     {label}
                   </button>
                 ))}
               </div>
+              <p className="status-text">
+                Showing {visiblePlayers.length} of {players.length} players
+                {selectionMode === "team_red"
+                  ? " (Team Red only)"
+                  : selectionMode === "team_blue"
+                    ? " (Team Blue only)"
+                    : selectionMode === "custom"
+                      ? " (Selected only)"
+                      : ""}
+                . Trails for everyone else are hidden.
+              </p>
               <div className="trajectory-player-list">
-                {players.map((row) => {
+                {listedPlayers.map((row) => {
                   const gid = Number(row.person_group_id);
                   const checked =
                     selectionMode === "all"
-                    || (selectionMode === "team_red" && row.team_id === 0)
-                    || (selectionMode === "team_blue" && row.team_id === 1)
-                    || (selectionMode === "custom" && selectedIds.includes(gid));
+                    || selectedIds.includes(gid);
+                  const teamId = teamIdOf(row);
                   return (
                     <label key={gid} className="trajectory-player-item">
                       <input
@@ -554,17 +853,24 @@ function TrajectoryViewer({
                       />
                       <span
                         className="trajectory-swatch"
-                        style={{ background: teamColor(row.team_id, gid) }}
+                        style={{ background: teamColor(teamId, gid) }}
                       />
                       P{gid}
-                      {row.team_id === 0
+                      {teamId === 0
                         ? " · Red"
-                        : row.team_id === 1
+                        : teamId === 1
                           ? " · Blue"
                           : ""}
                     </label>
                   );
                 })}
+                {listedPlayers.length === 0 ? (
+                  <p className="status-text">
+                    {selectionMode === "custom"
+                      ? "No players selected. Switch to All players and check the ones you want, or Confirm a selection on the Select tab first."
+                      : "No players match this team filter."}
+                  </p>
+                ) : null}
               </div>
             </div>
 
@@ -662,19 +968,79 @@ function TrajectoryViewer({
             </div>
           </div>
 
-          <div className="trajectory-canvas-wrap">
-            <canvas
-              ref={canvasRef}
-              className="trajectory-canvas"
-              width={frameWidth}
-              height={frameHeight}
+          <div className={`trajectory-canvas-wrap${hasPlayVideo ? " has-play-video" : ""}`}>
+            <div
+              className="trajectory-stage"
+              style={{ aspectRatio: `${frameWidth} / ${frameHeight}` }}
+            >
+              {hasPlayVideo ? (
+                <video
+                  key={activePlayUrl}
+                  ref={videoRef}
+                  className="trajectory-play-video"
+                  src={activePlayUrl}
+                  playsInline
+                  preload="metadata"
+                  onLoadedMetadata={(event) => {
+                    try {
+                      event.currentTarget.currentTime = Math.max(0, playhead);
+                    } catch {
+                      /* ignore */
+                    }
+                  }}
+                />
+              ) : null}
+              <canvas
+                ref={canvasRef}
+                className="trajectory-canvas"
+                width={frameWidth}
+                height={frameHeight}
+              />
+            </div>
+            <PlayheadScrubber
+              value={playhead}
+              min={timeStart}
+              max={timeEnd || duration}
+              onChange={(t) => {
+                setIsPlaying(false);
+                setPlayhead(t);
+              }}
+              playing={isPlaying}
+              onTogglePlay={() => {
+                if (isPlaying) {
+                  setIsPlaying(false);
+                  return;
+                }
+                if (playhead >= (timeEnd || duration) - 0.05) {
+                  setPlayhead(timeStart);
+                  const video = videoRef.current;
+                  if (video) {
+                    try {
+                      video.currentTime = timeStart;
+                    } catch {
+                      /* ignore */
+                    }
+                  }
+                }
+                setIsPlaying(true);
+              }}
+              markerSeconds={
+                focusMarker && Number.isFinite(focusMarker.t)
+                  ? focusMarker.t
+                  : null
+              }
+              markerLabel="Event"
             />
+            <p className="status-text">
+              Playhead at {formatClock(playhead)} — the clip and marks move together.
+            </p>
           </div>
 
           <p className="status-text trajectory-legend">
-            ○ start · ■ end · colors by team (Red / Blue). Heatmap density uses the same
-            analytics-safe points (closeups/transitions excluded) in normalized
-            screen-space.
+            ○ start · ■ end · dashed = interpolated across a short missed-detection
+            gap · trails are smoothed to cancel per-frame box/mask jitter · colors
+            by team (Red / Blue). Heatmap density uses the same analytics-safe
+            points (closeups/transitions excluded) in normalized screen-space.
           </p>
           {summary ? (
             <p className="status-text">
@@ -684,6 +1050,19 @@ function TrajectoryViewer({
                 ? ` · density from ${filteredDensityPoints.length} filtered points`
                 : ""}{" "}
               · {summary.coordinate_space || "normalized screen-space coordinates"}
+            </p>
+          ) : null}
+          {summary ? (
+            <p className="status-text">
+              {summary.identity_locked
+                ? "Foot position from confirmed player masks (SAM 2 + ReID identity-locked tracks)."
+                : "Foot position from raw detections — confirm player selection first for identity-locked, higher-accuracy trails."}
+              {summary.mask_stance_points
+                ? ` ${summary.mask_stance_points} of ${
+                    (summary.mask_stance_points || 0) +
+                    (summary.bbox_fallback_points || 0)
+                  } points used the player's segmentation mask.`
+                : ""}
             </p>
           ) : null}
         </>
