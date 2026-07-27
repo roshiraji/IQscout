@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   generateJobTrajectories,
+  getJobCameraMotion,
   getJobSegments,
   getJobTrajectories,
   jobFileUrl,
@@ -40,9 +41,44 @@ const TRAIL_FADE_OLD = 0.09;
 const TRAIL_FADE_MID = 0.22;
 const TRAIL_FADE_NEW = 0.52;
 const TRAIL_FADE_HEAD_FRACTION = 0.28;
-/** Non-focused players stay on canvas but heavily dimmed for context. */
-const CONTEXT_TRAIL_SCALE = 0.15;
-const CONTEXT_MARKER_ALPHA = 0.18;
+/** Default context dim (0–100). Higher = fainter non-focused trails. */
+const DEFAULT_CONTEXT_DIM = 85;
+/** Default background dim (0–100). Higher = darker film under the trails. */
+const DEFAULT_BACKGROUND_DIM = 20;
+/** How far to look for a neighboring frame's camera transform. */
+const MOTION_FRAME_SEARCH = 12;
+
+/** camera_motion frame row → 3x3 matrix (row-major, h22 == 1). */
+function mat3FromMotionRow(row) {
+  return [row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], 1];
+}
+
+function mat3Invert(m) {
+  const [a, b, c, d, e, f, g, h, i] = m;
+  const A = e * i - f * h;
+  const B = f * g - d * i;
+  const C = d * h - e * g;
+  const det = a * A + b * B + c * C;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  return [
+    A / det,
+    (c * h - b * i) / det,
+    (b * f - c * e) / det,
+    B / det,
+    (a * i - c * g) / det,
+    (c * d - a * f) / det,
+    C / det,
+    (b * g - a * h) / det,
+    (a * e - b * d) / det,
+  ];
+}
+
+/** Apply a homography to a normalized point; null when it projects to infinity. */
+function applyMat3(m, x, y) {
+  const w = m[6] * x + m[7] * y + m[8];
+  if (!Number.isFinite(w) || Math.abs(w) < 1e-9) return null;
+  return [(m[0] * x + m[1] * y + m[2]) / w, (m[3] * x + m[4] * y + m[5]) / w];
+}
 
 /**
  * Opacity for trail segment ending at mapped[segmentIndex].
@@ -248,6 +284,12 @@ function TrajectoryViewer({
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showEvents, setShowEvents] = useState(true);
   const [fadeByTime, setFadeByTime] = useState(true);
+  /** 0 = others full brightness, 100 = others nearly invisible (when focus is on). */
+  const [contextDim, setContextDim] = useState(DEFAULT_CONTEXT_DIM);
+  /** Darkens the film/snapshot under the canvas so trails read as high contrast. */
+  const [backgroundDim, setBackgroundDim] = useState(DEFAULT_BACKGROUND_DIM);
+  const [cameraMotion, setCameraMotion] = useState(null);
+  const [anchorToCourt, setAnchorToCourt] = useState(false);
   const [variant, setVariant] = useState("analytics");
   const [highlightIds, setHighlightIds] = useState([]);
   const [focusMarker, setFocusMarker] = useState(null);
@@ -291,14 +333,17 @@ function TrajectoryViewer({
 
   const loadExisting = useCallback(
     async (id, nextVariant = variant) => {
-      const [traj, segs] = await Promise.all([
+      const [traj, segs, motion] = await Promise.all([
         getJobTrajectories(id, nextVariant),
         getJobSegments(id),
+        // Court anchoring is optional polish — never fail the load over it.
+        getJobCameraMotion(id).catch(() => null),
       ]);
       const rows = traj.trajectories || [];
       setSummary(traj.summary || null);
       setPlayers(rows);
       setSegments(segs.segments || []);
+      setCameraMotion(motion?.available ? motion : null);
       const dur = Number(traj.summary?.duration_seconds) || 0;
       setTimeStart(0);
       setTimeEnd(dur);
@@ -445,6 +490,39 @@ function TrajectoryViewer({
   }, [highlightIds, selectionMode, selectedIds]);
 
   const focusActive = focusIds.length > 0;
+
+  const motionIndex = useMemo(() => {
+    if (!cameraMotion?.available) return null;
+    const byFrame = new Map();
+    for (const row of cameraMotion.frames || []) {
+      if (!Array.isArray(row) || row.length < 10) continue;
+      byFrame.set(Number(row[0]), row);
+    }
+    if (byFrame.size === 0) return null;
+    return { byFrame, fps: Number(cameraMotion.fps) || 30 };
+  }, [cameraMotion]);
+
+  // The playhead frame is the view every trail gets warped into, so marks land
+  // on the court the camera is showing right now.
+  const displayWarp = useMemo(() => {
+    if (!anchorToCourt || !motionIndex) return null;
+    const target = Math.round(playhead * motionIndex.fps);
+    let row = null;
+    for (let delta = 0; delta <= MOTION_FRAME_SEARCH && !row; delta += 1) {
+      row =
+        motionIndex.byFrame.get(target - delta) ||
+        motionIndex.byFrame.get(target + delta) ||
+        null;
+    }
+    if (!row) return null;
+    const inverse = mat3Invert(mat3FromMotionRow(row));
+    if (!inverse) return null;
+    return { anchorId: Number(row[1]), inverse };
+  }, [anchorToCourt, motionIndex, playhead]);
+
+  // Map slider → opacity scale for non-focused trails / markers.
+  const contextTrailScale = Math.max(0.02, 1 - contextDim / 100);
+  const contextMarkerAlpha = Math.max(0.04, contextTrailScale * 1.15);
 
   // Player chips: for team filters only list that team; for Selected list
   // everyone so the user can pick who to focus (others stay dimmed on canvas).
@@ -599,13 +677,16 @@ function TrajectoryViewer({
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
 
+    // Slider-controlled scrim: the film darkens, the trails do not, so the
+    // contrast between court footage and marks is the user's call.
+    const scrim = Math.min(0.95, Math.max(0, backgroundDim / 100));
     if (hasPlayVideo) {
-      // Video sits under the canvas — keep a light dim so marks stay readable.
-      ctx.fillStyle = "rgba(0,0,0,0.18)";
+      // Video sits under the canvas — the scrim is the only thing we can dim.
+      ctx.fillStyle = `rgba(0,0,0,${scrim})`;
       ctx.fillRect(0, 0, w, h);
     } else if (bgImageRef.current) {
       ctx.drawImage(bgImageRef.current, 0, 0, w, h);
-      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      ctx.fillStyle = `rgba(0,0,0,${scrim})`;
       ctx.fillRect(0, 0, w, h);
     } else {
       ctx.fillStyle = "#12141a";
@@ -614,7 +695,13 @@ function TrajectoryViewer({
 
     ctx.fillStyle = "rgba(255,255,255,0.7)";
     ctx.font = "12px sans-serif";
-    ctx.fillText("Screen-space trajectory preview", 12, 18);
+    ctx.fillText(
+      displayWarp
+        ? "Court-anchored trajectory preview (camera motion removed)"
+        : "Screen-space trajectory preview",
+      12,
+      18
+    );
 
     if (showHeatmap) {
       const binsX = 48;
@@ -644,20 +731,47 @@ function TrajectoryViewer({
         const pts = frag.points;
         if (pts.length < 1) continue;
 
-        const mapped = pts.map((p) => ({
-          x: Number(p.x_normalized) * w,
-          y: Number(p.y_normalized) * h,
-          t: Number(p.time_seconds) || 0,
-          interp: Boolean(p.interpolated),
-        }));
+        const mapped = [];
+        let pendingBreak = false;
+        for (const p of pts) {
+          let xn = Number(p.x_normalized);
+          let yn = Number(p.y_normalized);
+          if (displayWarp) {
+            const row = motionIndex.byFrame.get(Number(p.frame));
+            // A different anchor means a different camera setup entirely —
+            // those points cannot be placed in this view.
+            if (!row || Number(row[1]) !== displayWarp.anchorId) {
+              pendingBreak = true;
+              continue;
+            }
+            const onAnchor = applyMat3(mat3FromMotionRow(row), xn, yn);
+            const inView =
+              onAnchor && applyMat3(displayWarp.inverse, onAnchor[0], onAnchor[1]);
+            if (!inView) {
+              pendingBreak = true;
+              continue;
+            }
+            [xn, yn] = inView;
+          }
+          mapped.push({
+            x: xn * w,
+            y: yn * h,
+            t: Number(p.time_seconds) || 0,
+            interp: Boolean(p.interpolated),
+            brk: pendingBreak,
+          });
+          pendingBreak = false;
+        }
+        if (mapped.length < 1) continue;
 
         if (mapped.length >= 2) {
           for (let i = 1; i < mapped.length; i += 1) {
             const a = mapped[i - 1];
             const b = mapped[i];
+            if (b.brk) continue;
             let alpha = trailSegmentAlpha(mapped, i, { fadeEnabled: fadeByTime });
             if (isContext) {
-              alpha *= CONTEXT_TRAIL_SCALE;
+              alpha *= contextTrailScale;
             } else if (isFocused) {
               alpha = Math.min(0.95, alpha * 1.35 + 0.12);
             }
@@ -690,17 +804,19 @@ function TrajectoryViewer({
             ctx.setLineDash([]);
 
             if (showArrows && i % 8 === 0) {
-              ctx.globalAlpha = isContext ? 0.18 : Math.min(1, alpha);
+              ctx.globalAlpha = isContext
+                ? contextMarkerAlpha
+                : Math.min(1, alpha);
               drawArrow(ctx, a.x, a.y, b.x, b.y, color);
             }
           }
         }
 
-        ctx.globalAlpha = isContext ? CONTEXT_MARKER_ALPHA : 1;
+        ctx.globalAlpha = isContext ? contextMarkerAlpha : 1;
         const start = mapped[0];
         const startAlpha = trailSegmentAlpha(mapped, 0, { fadeEnabled: fadeByTime });
         ctx.globalAlpha = isContext
-          ? 0.08
+          ? contextTrailScale * 0.55
           : Math.min(0.45, startAlpha + 0.08);
         ctx.fillStyle = color;
         ctx.beginPath();
@@ -708,11 +824,11 @@ function TrajectoryViewer({
         ctx.fill();
         ctx.strokeStyle = "#fff";
         ctx.lineWidth = 1;
-        ctx.globalAlpha = isContext ? CONTEXT_MARKER_ALPHA : 1;
+        ctx.globalAlpha = isContext ? contextMarkerAlpha : 1;
         ctx.stroke();
 
         const end = mapped[mapped.length - 1];
-        ctx.globalAlpha = isContext ? CONTEXT_MARKER_ALPHA : 1;
+        ctx.globalAlpha = isContext ? contextMarkerAlpha : 1;
         ctx.fillStyle = color;
         const endSize = isFocused ? 11 : 8;
         ctx.fillRect(end.x - endSize / 2, end.y - endSize / 2, endSize, endSize);
@@ -727,7 +843,12 @@ function TrajectoryViewer({
           ctx.stroke();
         }
 
-        if (showArrows && mapped.length >= 2 && !isContext) {
+        if (
+          showArrows &&
+          mapped.length >= 2 &&
+          !isContext &&
+          !mapped[mapped.length - 1].brk
+        ) {
           const a = mapped[mapped.length - 2];
           const b = mapped[mapped.length - 1];
           ctx.globalAlpha = isFocused ? 1 : 0.85;
@@ -768,6 +889,11 @@ function TrajectoryViewer({
     showHeatmap,
     showEvents,
     fadeByTime,
+    backgroundDim,
+    displayWarp,
+    motionIndex,
+    contextTrailScale,
+    contextMarkerAlpha,
     focusIds,
     focusActive,
     focusMarker,
@@ -918,6 +1044,25 @@ function TrajectoryViewer({
                   ? ` · focus ${focusIds.map((id) => `P${id}`).join(", ")}`
                   : ""}
               </p>
+              <label
+                className={`trajectory-inline${focusActive ? "" : " is-disabled"}`}
+                title={
+                  focusActive
+                    ? "How faint non-focused player paths appear"
+                    : "Select players (Selected mode) or an event to dim the others"
+                }
+              >
+                Dim others {contextDim}%
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={contextDim}
+                  disabled={!focusActive}
+                  onChange={(e) => setContextDim(Number(e.target.value))}
+                />
+              </label>
               <div className="trajectory-player-list">
                 {listedPlayers.map((row) => {
                   const gid = Number(row.person_group_id);
@@ -1053,6 +1198,36 @@ function TrajectoryViewer({
                   onChange={(e) => setShowEvents(e.target.checked)}
                 />
                 Event focus marker
+              </label>
+              <label
+                className={`trajectory-check${motionIndex ? "" : " is-disabled"}`}
+                title={
+                  motionIndex
+                    ? "Remove camera pan/zoom so trails stay on the same spot of floor"
+                    : "Camera motion has not been estimated — re-generate trajectories"
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={anchorToCourt && Boolean(motionIndex)}
+                  disabled={!motionIndex}
+                  onChange={(e) => setAnchorToCourt(e.target.checked)}
+                />
+                Anchor trails to court
+              </label>
+              <label
+                className="trajectory-inline"
+                title="Darken the film under the marks so trails read at higher contrast"
+              >
+                Dim film {backgroundDim}%
+                <input
+                  type="range"
+                  min={0}
+                  max={90}
+                  step={1}
+                  value={backgroundDim}
+                  onChange={(e) => setBackgroundDim(Number(e.target.value))}
+                />
               </label>
             </div>
           </div>

@@ -55,6 +55,7 @@ from src.analytics.service import (  # noqa: E402
     AnalyticsServiceError,
     generate_analytics_for_job,
     get_ball_preview_for_job,
+    get_camera_motion_for_job,
     get_segments_for_job,
     get_timeline_for_job,
     get_trajectories_for_job,
@@ -188,6 +189,7 @@ def health() -> dict:
             "analytics_trajectories",
             "analytics_timeline",
             "analytics_ball_preview",
+            "analytics_camera_motion",
             "wnba_team_roster",
             "play_outcome_tagging",
         ],
@@ -614,6 +616,15 @@ def get_job_analytics_timeline(job_id: str) -> dict:
     except AnalyticsServiceError as exc:
         _raise_analytics_http(exc)
         raise  # pragma: no cover
+
+
+@app.get("/api/jobs/{job_id}/analytics/camera-motion")
+def get_job_analytics_camera_motion(job_id: str) -> dict:
+    """Per-frame camera homographies so trails can be pinned to the court."""
+    job_dir = _analytics_job_dir(job_id)
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    return get_camera_motion_for_job(job_dir)
 
 
 @app.get("/api/jobs/{job_id}/analytics/ball-preview")

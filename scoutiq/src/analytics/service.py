@@ -183,6 +183,25 @@ def generate_analytics_for_job(job_dir: str | Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Density generation skipped for %s: %s", job_dir.name, exc)
 
+    camera_motion_payload = None
+    try:
+        from src.analytics.camera_motion import estimate_camera_motion_for_job
+
+        motion_cfg = {}
+        try:
+            from src.pipeline.player_track_pipeline import load_pipeline_config
+
+            motion_cfg = (load_pipeline_config().get("analytics") or {}).get(
+                "camera_motion"
+            ) or {}
+        except Exception:  # noqa: BLE001
+            motion_cfg = {}
+        camera_motion_payload = estimate_camera_motion_for_job(
+            job_dir, segments_payload=segments_payload, config=motion_cfg
+        )
+    except Exception as exc:  # noqa: BLE001 - court anchoring is an overlay nicety
+        logger.warning("Camera motion skipped for %s: %s", job_dir.name, exc)
+
     timeline_payload = None
     try:
         from src.analytics.timeline import generate_timeline_for_job
@@ -199,11 +218,19 @@ def generate_analytics_for_job(job_dir: str | Path) -> dict[str, Any]:
     if segments_payload.get("confidence") == "reduced":
         warnings.append("Segment confidence is reduced.")
 
+    if camera_motion_payload and not camera_motion_payload.get("available"):
+        warnings.append(
+            "Court anchoring is unavailable for this clip "
+            f"({camera_motion_payload.get('note')})."
+        )
+
     artifacts = dict(summary.get("artifacts") or {})
     if density_payload is not None:
         artifacts["heatmap_density"] = "analytics/heatmap_density.json"
     if timeline_payload is not None:
         artifacts["game_timeline"] = "analytics/game_timeline.json"
+    if camera_motion_payload is not None:
+        artifacts["camera_motion"] = "analytics/camera_motion.json"
 
     return {
         "job_id": job_dir.name,
@@ -226,6 +253,16 @@ def generate_analytics_for_job(job_dir: str | Path) -> dict[str, Any]:
         ),
         "timeline_summary": (
             timeline_payload.get("summary") if timeline_payload else None
+        ),
+        "camera_motion": (
+            {
+                "available": camera_motion_payload.get("available"),
+                "anchor_count": camera_motion_payload.get("anchor_count"),
+                "frame_count": camera_motion_payload.get("frame_count"),
+                "held_frames": camera_motion_payload.get("held_frames"),
+            }
+            if camera_motion_payload
+            else None
         ),
         "artifacts": artifacts,
     }
@@ -275,6 +312,26 @@ def get_trajectories_for_job(
         "trajectories": rows,
         "trajectory_count": len(rows),
     }
+
+
+def get_camera_motion_for_job(job_dir: str | Path) -> dict[str, Any]:
+    """Per-frame background homographies used to pin trails to the court."""
+    job_dir = Path(job_dir).resolve()
+    from src.analytics.camera_motion import load_camera_motion
+
+    payload = load_camera_motion(job_dir)
+    if payload is None:
+        return {
+            "job_id": job_dir.name,
+            "available": False,
+            "anchors": [],
+            "frames": [],
+            "note": (
+                "Camera motion has not been estimated. Generate trajectories to "
+                "build it."
+            ),
+        }
+    return payload
 
 
 def get_timeline_for_job(job_dir: str | Path) -> dict[str, Any]:

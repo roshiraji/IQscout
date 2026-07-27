@@ -183,6 +183,16 @@ analytics:
   heatmap_density:
     bins_x: 48                   # horizontal bins in normalized screen space
     bins_y: 27                   # vertical bins (~16:9)
+  # Background homographies that let the UI pin trails to the court while the
+  # broadcast camera pans. Estimated per gameplay segment, players masked out.
+  camera_motion:
+    enabled: true
+    working_side: 640            # optical-flow resolution (long side)
+    max_features: 900
+    min_inliers: 24              # below this the frame is held, not trusted
+    ransac_reproj_px: 2.5
+    player_mask_pad: 14          # grow player boxes before excluding their pixels
+    max_held_frames: 6           # consecutive unmatched frames before re-anchoring
   # Screen-space movement events (Phase 10). Speeds are norm-units/second.
   movement_events:
     stationary_speed_max: 0.015  # below → stationary

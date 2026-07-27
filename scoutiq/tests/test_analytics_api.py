@@ -195,5 +195,12 @@ def test_fastapi_analytics_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "events" in body
     assert body["summary"]["event_count"] >= 1
 
+    # The fixture job has no source video, so court anchoring reports why.
+    motion = client.get(f"/api/jobs/{job_id}/analytics/camera-motion")
+    assert motion.status_code == 200
+    motion_body = motion.json()
+    assert motion_body["available"] is False
+    assert motion_body["note"]
+
     bad_variant = client.get(f"/api/jobs/{job_id}/analytics/trajectories?variant=court")
     assert bad_variant.status_code == 400

@@ -13,7 +13,7 @@ def write_json_atomic(
     path: Path,
     payload: dict[str, Any] | list[Any],
     *,
-    indent: int = 2,
+    indent: int | None = 2,
     retries: int = 8,
     retry_delay_s: float = 0.03,
 ) -> None:

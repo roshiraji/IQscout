@@ -225,6 +225,14 @@ export async function getJobTimeline(jobId) {
   return parseJsonResponse(response);
 }
 
+/** Per-frame camera homographies used to pin trails to the court. */
+export async function getJobCameraMotion(jobId) {
+  const response = await fetch(
+    `${API_BASE}/jobs/${encodeURIComponent(jobId)}/analytics/camera-motion`
+  );
+  return parseJsonResponse(response);
+}
+
 export async function getJobBallPreview(jobId) {
   const response = await fetch(
     `${API_BASE}/jobs/${encodeURIComponent(jobId)}/analytics/ball-preview`

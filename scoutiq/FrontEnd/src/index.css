@@ -1243,6 +1243,10 @@ button:disabled {
   width: 100%;
 }
 
+.trajectory-inline.is-disabled {
+  opacity: 0.55;
+}
+
 .trajectory-check {
   display: flex;
   align-items: center;
