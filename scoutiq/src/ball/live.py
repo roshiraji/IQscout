@@ -56,6 +56,7 @@ def run_ball_tracking_on_video(
     every_n = max(int(ball_cfg.get("every_n_frames", 1)), 1)
     use_hsv = bool(ball_cfg.get("hsv_fallback", True))
     track_cfg = ball_cfg.get("track") or {}
+    spatial_filter = dict(ball_cfg.get("spatial_filter") or {})
     cut_set = set(int(c) for c in (cut_frames or []))
 
     # Optional hoop detector (WS3) for attacking-direction.
@@ -154,6 +155,7 @@ def run_ball_tracking_on_video(
                     conf=conf,
                     device=device,
                     use_hsv_fallback=use_hsv,
+                    spatial_filter=spatial_filter,
                 )
                 tracked = tracker.update(dets)
                 last_tracked = tracked

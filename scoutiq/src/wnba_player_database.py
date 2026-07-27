@@ -14,8 +14,6 @@ outputs/wnba_players.db
 from pathlib import Path
 import sqlite3
 
-from sportsdataverse.wnba import espn_wnba_team_roster, espn_wnba_teams_site
-
 DB_PATH = Path("outputs/wnba_players.db")
 
 
@@ -61,6 +59,8 @@ def create_database():
 
 
 def save_roster(conn, team_id, team_abbreviation=None, team_display_name=None):
+    from sportsdataverse.wnba import espn_wnba_team_roster
+
     cursor = conn.cursor()
     roster = espn_wnba_team_roster(team_id)
 
@@ -103,6 +103,8 @@ def save_roster(conn, team_id, team_abbreviation=None, team_display_name=None):
 
 
 def save_all_rosters():
+    from sportsdataverse.wnba import espn_wnba_teams_site
+
     conn = create_database()
     teams = espn_wnba_teams_site()
 
@@ -124,6 +126,57 @@ def save_all_rosters():
     print(f"WNBA player database complete.")
     print(f"Total players saved: {total_players}")
     print(f"Database path: {DB_PATH.resolve()}")
+
+
+def list_wnba_teams(db_path=None):
+    """Distinct WNBA teams from the local roster SQLite DB.
+
+    Returns abbreviation + display name for Home/Away pickers. Soft-empty when
+    the DB is missing so the UI can still fall back to free text.
+    """
+    path = Path(db_path) if db_path is not None else DB_PATH
+    if not path.is_absolute():
+        # Resolve relative to scoutiq/ (this file lives in scoutiq/src/).
+        path = Path(__file__).resolve().parents[1] / path
+    if not path.is_file():
+        return []
+
+    conn = sqlite3.connect(path)
+    try:
+        cursor = conn.cursor()
+        rows = cursor.execute(
+            """
+            SELECT
+                team_abbreviation,
+                team_display_name,
+                team_id,
+                COUNT(*) AS player_count
+            FROM players
+            WHERE team_abbreviation IS NOT NULL
+              AND TRIM(team_abbreviation) != ''
+            GROUP BY team_abbreviation, team_display_name, team_id
+            ORDER BY team_display_name COLLATE NOCASE
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    teams = []
+    seen = set()
+    for abbr, display, team_id, player_count in rows:
+        code = str(abbr or "").strip().upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        teams.append(
+            {
+                "abbreviation": code,
+                "display_name": str(display or code).strip() or code,
+                "team_id": team_id,
+                "player_count": int(player_count or 0),
+            }
+        )
+    return teams
 
 
 if __name__ == "__main__":

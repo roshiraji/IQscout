@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from src.ball.proposals import merge_proposals, propose_hsv_balls
+from src.ball.spatial import filter_balls_by_court_band, spatial_gates_from_cfg
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,13 @@ def detect_balls(
     conf: float = 0.25,
     device: str | int = "cpu",
     use_hsv_fallback: bool = True,
+    spatial_filter: dict[str, Any] | None = None,
 ) -> list[dict]:
-    """Detect basketball boxes. Prefer trained weights; HSV soft-fallback."""
+    """Detect basketball boxes. Prefer trained weights; HSV soft-fallback.
+
+    After NMS, drop boxes whose centers fall in the upper crowd / scorebug
+    bands (``spatial_filter`` / court-band gates).
+    """
     dets: list[dict] = []
     if weights is not None and Path(weights).is_file():
         try:
@@ -65,7 +71,7 @@ def detect_balls(
             dets = []
 
     if not dets and use_hsv_fallback:
-        for p in propose_hsv_balls(image_bgr):
+        for p in propose_hsv_balls(image_bgr, spatial_filter=spatial_filter):
             dets.append(
                 {
                     "bbox_xyxy": p["bbox_xyxy"],
@@ -77,4 +83,16 @@ def detect_balls(
             )
 
     dets = merge_proposals(dets)
+    h, w = image_bgr.shape[:2]
+    gates = spatial_gates_from_cfg({"spatial_filter": spatial_filter or {}})
+    dets = filter_balls_by_court_band(
+        dets,
+        frame_width=w,
+        frame_height=h,
+        enabled=bool(gates["enabled"]),
+        y_min=float(gates["y_min"]),
+        y_max=float(gates["y_max"]),
+        x_min=float(gates["x_min"]),
+        x_max=float(gates["x_max"]),
+    )
     return dets[:2]

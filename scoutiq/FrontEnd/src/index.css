@@ -74,11 +74,24 @@ p {
   color: #c8c8c8;
 }
 
+.upload-hint {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.upload-action-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #c8c8c8;
+  flex: 1;
+  min-width: 200px;
+}
+
 .upload-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 10px 14px;
   margin-top: 10px;
 }
 
@@ -121,6 +134,85 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.game-context-card .status-text {
+  text-align: left;
+}
+
+.game-context-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+  text-align: left;
+}
+
+.game-context-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  text-align: left;
+  min-width: 0;
+}
+
+.game-context-field-label {
+  display: block;
+  color: #d6d6d6;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  line-height: 1.2;
+}
+
+.game-context-field input,
+.game-context-field select {
+  width: 100%;
+  box-sizing: border-box;
+  background: #111;
+  color: #f2f2f2;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.game-context-field select {
+  color-scheme: dark;
+}
+
+.game-context-date {
+  min-height: 38px;
+  /* Light scheme makes the native calendar glyph dark, then invert → white. */
+  color-scheme: light;
+}
+
+.game-context-date::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  width: 18px;
+  height: 18px;
+  padding: 2px;
+  filter: invert(1);
+}
+
+.game-context-teams-note {
+  margin-top: 10px;
+  font-size: 12px;
+  text-align: left;
+}
+
+@media (max-width: 900px) {
+  .game-context-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .game-context-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .message-list {
@@ -377,6 +469,41 @@ button:disabled {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid #2b2b2b;
+}
+
+.identity-manual-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #161616;
+  color: #f2f2f2;
+  border: 1px solid #2b2b2b;
+  border-radius: 10px;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.identity-manual-toggle:hover {
+  border-color: #3a3a3a;
+  background: #1a1a1a;
+}
+
+.identity-manual-toggle-title {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.identity-manual-toggle-meta {
+  color: #9a9a9a;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.identity-manual-panel.is-open .identity-manual-toggle {
+  margin-bottom: 8px;
 }
 
 .identity-manual-panel h3 {
@@ -831,7 +958,14 @@ button:disabled {
 }
 
 .trajectory-label {
-  margin-bottom: 10px;
+  margin-bottom: 6px;
+}
+
+.trajectory-calib-note {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #9a9a9a;
+  font-style: italic;
 }
 
 .trajectory-toolbar {
@@ -894,6 +1028,10 @@ button:disabled {
   color: #d6d6d6;
 }
 
+.trajectory-player-item.is-focused {
+  color: #ffe08a;
+}
+
 .trajectory-swatch {
   width: 10px;
   height: 10px;
@@ -940,11 +1078,23 @@ button:disabled {
 }
 
 .trajectory-canvas-wrap {
+  position: relative;
   width: 100%;
-  overflow: auto;
+  overflow: hidden;
   border-radius: 10px;
-  background: #000;
   border: 1px solid #2a2a2a;
+  background: #0b0b0b;
+}
+
+.trajectory-status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #c8c8c8;
+  background: #141414;
+  border-bottom: 1px solid #2a2a2a;
 }
 
 .trajectory-canvas {
@@ -956,7 +1106,24 @@ button:disabled {
 }
 
 .trajectory-legend {
-  margin-top: 10px;
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  font-size: 12px;
+  color: #c8c8c8;
+}
+
+.trajectory-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trajectory-swatch-ball {
+  box-shadow: 0 0 0 1px #fff;
 }
 
 .event-table-panel {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 TEAM_ALIASES = {
     "indiana fever": "IND",
+    "indiana fevers": "IND",
     "fever": "IND",
     "ind": "IND",
     "atlanta dream": "ATL",
@@ -41,7 +42,9 @@ TEAM_ALIASES = {
     "storm": "SEA",
     "sea": "SEA",
     "toronto temp": "TOR",
+    "toronto tempo": "TOR",
     "temp": "TOR",
+    "tempo": "TOR",
     "tor": "TOR",
     "washington mystics": "WSH",
     "mystics": "WSH",
