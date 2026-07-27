@@ -225,8 +225,21 @@ export async function getJobTimeline(jobId) {
   return parseJsonResponse(response);
 }
 
+export async function getJobBallPreview(jobId) {
+  const response = await fetch(
+    `${API_BASE}/jobs/${encodeURIComponent(jobId)}/analytics/ball-preview`
+  );
+  return parseJsonResponse(response);
+}
+
 export async function getHealth() {
   const response = await fetch(`${API_BASE}/health`);
+  return parseJsonResponse(response);
+}
+
+/** WNBA teams from local roster SQLite DB (Home/Away pickers). */
+export async function getWnbaTeams() {
+  const response = await fetch(`${API_BASE}/wnba/teams`);
   return parseJsonResponse(response);
 }
 

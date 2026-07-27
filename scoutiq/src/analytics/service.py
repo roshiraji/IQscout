@@ -286,3 +286,160 @@ def get_timeline_for_job(job_dir: str | Path) -> dict[str, Any]:
             "Timeline not found. POST /api/jobs/{job_id}/analytics/trajectories/generate first.",
         )
     return _read_json(path)
+
+
+def get_ball_preview_for_job(job_dir: str | Path) -> dict[str, Any]:
+    """Normalized ball centers for trajectory preview (soft-empty if missing).
+
+    Preview hygiene (no YOLO re-run): drop coast/interp/HSV fallback and low
+    confidence points, reject upper-crowd / scorebug centers, and mark trail
+    breaks on large frame/spatial jumps so the UI does not draw long chords
+    into the stands.
+    """
+    job_dir = Path(job_dir).resolve()
+    from src.analytics.events_ball import _as_float, _as_int, _bbox_center_norm, _load_jsonl_gz
+    from src.ball.spatial import center_in_court_band, spatial_gates_from_cfg
+
+    # Soft sources often latch onto scorebug / crowd orange / extrapolated drift.
+    _REJECT_SOURCES = {"coast", "interp", "hsv_fallback"}
+    _MIN_CONF = 0.35
+    _MAX_FRAME_GAP = 6
+    _MAX_JUMP_NORM = 0.10  # Euclidean distance in normalized image space
+
+    ball_cfg: dict[str, Any] = {}
+    try:
+        from src.pipeline.player_track_pipeline import load_pipeline_config
+
+        ball_cfg = load_pipeline_config().get("ball") or {}
+    except Exception:  # noqa: BLE001
+        ball_cfg = {}
+    gates = spatial_gates_from_cfg(ball_cfg)
+
+    ball_frames: list[dict[str, Any]] = []
+    for name in ("ball_tracks.jsonl.gz", "ball_tracks.jsonl"):
+        path = job_dir / name
+        if path.is_file():
+            ball_frames = _load_jsonl_gz(path)
+            break
+
+    width = height = None
+    fps = None
+    summary_path = job_dir / "ball_summary.json"
+    if summary_path.is_file():
+        try:
+            summary = _read_json(summary_path)
+            width = _as_int(summary.get("frame_width"))
+            height = _as_int(summary.get("frame_height"))
+            fps = _as_float(summary.get("fps"))
+        except Exception:  # noqa: BLE001
+            pass
+    if not width or not height:
+        snap_path = job_dir / "snapshot.json"
+        if snap_path.is_file():
+            try:
+                snap = _read_json(snap_path)
+                width = width or _as_int(snap.get("frame_width"))
+                height = height or _as_int(snap.get("frame_height"))
+            except Exception:  # noqa: BLE001
+                pass
+    width = int(width or 1280)
+    height = int(height or 720)
+
+    def _pick_preview_ball(balls: list[Any]) -> dict[str, Any] | None:
+        real: list[dict[str, Any]] = []
+        for ball in balls:
+            if not isinstance(ball, dict):
+                continue
+            if ball.get("interpolated"):
+                continue
+            source = str(ball.get("source") or "")
+            if source in _REJECT_SOURCES:
+                continue
+            conf = float(ball.get("confidence") or 0.0)
+            if conf < _MIN_CONF:
+                continue
+            xy = _bbox_center_norm(
+                ball.get("bbox_xyxy"), frame_width=width, frame_height=height
+            )
+            if xy is None:
+                continue
+            if gates["enabled"] and not center_in_court_band(
+                xy[0],
+                xy[1],
+                y_min=float(gates["y_min"]),
+                y_max=float(gates["y_max"]),
+                x_min=float(gates["x_min"]),
+                x_max=float(gates["x_max"]),
+            ):
+                continue
+            real.append(ball)
+        if not real:
+            return None
+        return max(real, key=lambda b: float(b.get("confidence") or 0.0))
+
+    raw_points: list[dict[str, Any]] = []
+    for row in ball_frames:
+        if not isinstance(row, dict):
+            continue
+        frame = _as_int(row.get("frame_number") or row.get("frame"))
+        t = _as_float(row.get("timestamp_seconds"))
+        balls = row.get("balls") or []
+        if frame is None or not isinstance(balls, list) or not balls:
+            continue
+        ball = _pick_preview_ball(balls)
+        if ball is None:
+            continue
+        xy = _bbox_center_norm(
+            ball.get("bbox_xyxy"), frame_width=width, frame_height=height
+        )
+        if xy is None:
+            continue
+        if t is None and fps and fps > 0:
+            t = float(frame) / float(fps)
+        raw_points.append(
+            {
+                "frame": frame,
+                "time_seconds": float(t or 0.0),
+                "x_normalized": round(xy[0], 6),
+                "y_normalized": round(xy[1], 6),
+                "confidence": float(ball.get("confidence") or 0.0),
+                "source": ball.get("source"),
+            }
+        )
+
+    points: list[dict[str, Any]] = []
+    prev: dict[str, Any] | None = None
+    for pt in raw_points:
+        break_before = False
+        if prev is not None:
+            frame_gap = int(pt["frame"]) - int(prev["frame"])
+            dx = float(pt["x_normalized"]) - float(prev["x_normalized"])
+            dy = float(pt["y_normalized"]) - float(prev["y_normalized"])
+            jump = (dx * dx + dy * dy) ** 0.5
+            if frame_gap > _MAX_FRAME_GAP or jump > _MAX_JUMP_NORM:
+                break_before = True
+        points.append({**pt, "trail_break_before": break_before})
+        prev = pt
+
+    return {
+        "job_id": job_dir.name,
+        "available": bool(points),
+        "coordinate_space": "normalized_screen_space",
+        "frame_width": width,
+        "frame_height": height,
+        "fps": fps,
+        "point_count": len(points),
+        "points": points,
+        "spatial_filter": {
+            "enabled": bool(gates["enabled"]),
+            "y_min": float(gates["y_min"]),
+            "y_max": float(gates["y_max"]),
+            "x_min": float(gates["x_min"]),
+            "x_max": float(gates["x_max"]),
+        },
+        "note": (
+            "Screen-space ball centers for preview only. "
+            "Coast/interp/HSV, court-band rejects, and large jumps are filtered "
+            "so trails do not draw into the crowd. Missing when ball tracking was not run."
+        ),
+    }

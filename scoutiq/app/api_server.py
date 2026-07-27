@@ -54,6 +54,7 @@ from src.pipeline.resolve_job_identity import resolve_job_identity, resolve_manu
 from src.analytics.service import (  # noqa: E402
     AnalyticsServiceError,
     generate_analytics_for_job,
+    get_ball_preview_for_job,
     get_segments_for_job,
     get_timeline_for_job,
     get_trajectories_for_job,
@@ -186,8 +187,29 @@ def health() -> dict:
             "resource_pull_auto",
             "analytics_trajectories",
             "analytics_timeline",
+            "analytics_ball_preview",
+            "wnba_team_roster",
             "play_outcome_tagging",
         ],
+    }
+
+
+@app.get("/api/wnba/teams")
+def list_wnba_roster_teams() -> dict:
+    """Current WNBA teams from outputs/wnba_players.db for Home/Away pickers."""
+    from wnba_player_database import list_wnba_teams
+
+    teams = list_wnba_teams()
+    return {
+        "available": bool(teams),
+        "team_count": len(teams),
+        "teams": teams,
+        "note": (
+            "Select abbreviations (e.g. IND) so roster identity matching does "
+            "not fail on typos like 'Indiana Fevers'."
+            if teams
+            else "Roster DB missing — rebuild with python -m src.wnba_player_database."
+        ),
     }
 
 
@@ -592,6 +614,15 @@ def get_job_analytics_timeline(job_id: str) -> dict:
     except AnalyticsServiceError as exc:
         _raise_analytics_http(exc)
         raise  # pragma: no cover
+
+
+@app.get("/api/jobs/{job_id}/analytics/ball-preview")
+def get_job_analytics_ball_preview(job_id: str) -> dict:
+    """Return normalized ball centers for trajectory preview (empty if unavailable)."""
+    job_dir = _analytics_job_dir(job_id)
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Tracking job not found.")
+    return get_ball_preview_for_job(job_dir)
 
 
 def _recompute_coach_insights(

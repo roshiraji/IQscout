@@ -1219,6 +1219,10 @@ button:disabled {
   color: #d6d6d6;
 }
 
+.trajectory-player-item.is-focused {
+  color: #ffe08a;
+}
+
 .trajectory-swatch {
   width: 10px;
   height: 10px;

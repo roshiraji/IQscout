@@ -32,6 +32,57 @@ function teamColor(teamId, personGroupId) {
   return palette[idx];
 }
 
+/** Trail stroke width; opacity comes from age-fade + focus dimming. */
+const TRAIL_LINE_WIDTH = 2.2;
+const TRAIL_OPACITY = 0.55;
+/** Age fade: oldest faint → newest clearly visible (last ~28%). */
+const TRAIL_FADE_OLD = 0.09;
+const TRAIL_FADE_MID = 0.22;
+const TRAIL_FADE_NEW = 0.52;
+const TRAIL_FADE_HEAD_FRACTION = 0.28;
+/** Non-focused players stay on canvas but heavily dimmed for context. */
+const CONTEXT_TRAIL_SCALE = 0.15;
+const CONTEXT_MARKER_ALPHA = 0.18;
+
+/**
+ * Opacity for trail segment ending at mapped[segmentIndex].
+ * Progression: faint (old) → medium → bright (newest ~28%).
+ */
+function trailSegmentAlpha(mapped, segmentIndex, { fadeEnabled = true } = {}) {
+  const n = mapped.length;
+  if (n < 2) return TRAIL_OPACITY;
+  if (!fadeEnabled) return TRAIL_OPACITY;
+
+  if (n <= 3) {
+    const u = segmentIndex / Math.max(1, n - 1);
+    return TRAIL_OPACITY * (0.75 + 0.35 * u);
+  }
+
+  const t0 = Number(mapped[0].t);
+  const tN = Number(mapped[n - 1].t);
+  const tB = Number(mapped[segmentIndex].t);
+  let u;
+  if (
+    Number.isFinite(t0) &&
+    Number.isFinite(tN) &&
+    Number.isFinite(tB) &&
+    tN > t0 + 1e-6
+  ) {
+    u = (tB - t0) / (tN - t0);
+  } else {
+    u = segmentIndex / (n - 1);
+  }
+  u = Math.min(1, Math.max(0, u));
+
+  const headStart = 1 - TRAIL_FADE_HEAD_FRACTION;
+  if (u < headStart) {
+    const v = u / headStart;
+    return TRAIL_FADE_OLD + (TRAIL_FADE_MID - TRAIL_FADE_OLD) * v;
+  }
+  const v = (u - headStart) / TRAIL_FADE_HEAD_FRACTION;
+  return TRAIL_FADE_MID + (TRAIL_FADE_NEW - TRAIL_FADE_MID) * v;
+}
+
 function idsForMode(players, mode, confirmSelectedIds = []) {
   if (mode === "all") {
     return players.map((row) => Number(row.person_group_id));
@@ -61,6 +112,8 @@ function playerMatchesSelection(row, mode, selectedIds) {
   if (mode === "all") return true;
   if (mode === "team_red") return teamIdOf(row) === 0;
   if (mode === "team_blue") return teamIdOf(row) === 1;
+  // Individual focus: keep everyone drawn; opacity handles emphasis.
+  if (mode === "custom") return true;
   return selectedIds.includes(gid);
 }
 
@@ -364,12 +417,10 @@ function TrajectoryViewer({
     (mode) => {
       setSelectionMode(mode);
       if (mode === "custom") {
+        // Prefer Confirm picks as the focus set; otherwise start empty so
+        // checking a player activates focus dimming.
         const seeded = idsForMode(players, "custom", confirmSelectedIds);
-        setSelectedIds(
-          seeded.length
-            ? seeded
-            : players.map((row) => Number(row.person_group_id))
-        );
+        setSelectedIds(seeded);
       } else {
         setSelectedIds(idsForMode(players, mode, confirmSelectedIds));
       }
@@ -384,10 +435,21 @@ function TrajectoryViewer({
     );
   }, [players, selectionMode, selectedIds]);
 
-  // Player chips: for team filters only list that team; for Selected only the
-  // checked set. All still lists everyone.
+  /** Person-group IDs to emphasize (event click or Individual checkboxes). */
+  const focusIds = useMemo(() => {
+    if (highlightIds.length > 0) return highlightIds;
+    if (selectionMode === "custom" && selectedIds.length > 0) {
+      return selectedIds;
+    }
+    return [];
+  }, [highlightIds, selectionMode, selectedIds]);
+
+  const focusActive = focusIds.length > 0;
+
+  // Player chips: for team filters only list that team; for Selected list
+  // everyone so the user can pick who to focus (others stay dimmed on canvas).
   const listedPlayers = useMemo(() => {
-    if (selectionMode === "all") return players;
+    if (selectionMode === "all" || selectionMode === "custom") return players;
     if (selectionMode === "team_red" || selectionMode === "team_blue") {
       return players.filter((row) =>
         playerMatchesSelection(row, selectionMode, selectedIds)
@@ -568,7 +630,8 @@ function TrajectoryViewer({
 
     for (const row of visiblePlayers) {
       const gid = Number(row.person_group_id);
-      const isHighlight = highlightIds.includes(gid);
+      const isFocused = focusActive && focusIds.includes(gid);
+      const isContext = focusActive && !isFocused;
       const color = teamColor(teamIdOf(row), row.person_group_id);
       const fragments = filterFragments(collectFragments(row), {
         segmentId: segmentIdFilter,
@@ -592,20 +655,20 @@ function TrajectoryViewer({
           for (let i = 1; i < mapped.length; i += 1) {
             const a = mapped[i - 1];
             const b = mapped[i];
-            let alpha = 0.9;
-            if (fadeByTime && duration > 0) {
-              alpha = 0.25 + 0.75 * (b.t / duration);
+            let alpha = trailSegmentAlpha(mapped, i, { fadeEnabled: fadeByTime });
+            if (isContext) {
+              alpha *= CONTEXT_TRAIL_SCALE;
+            } else if (isFocused) {
+              alpha = Math.min(0.95, alpha * 1.35 + 0.12);
             }
-            if (highlightIds.length && !isHighlight) {
-              alpha *= 0.25;
-            }
-            const segAlpha = Math.min(1, Math.max(0.15, alpha));
+            const segAlpha = Math.min(1, Math.max(0.05, alpha));
             const segInterpolated = a.interp || b.interp;
             const dash = segInterpolated ? [5, 5] : [];
-            const lineWidth = isHighlight ? 3.6 : 2.2;
+            const lineWidth = isFocused
+              ? TRAIL_LINE_WIDTH + 1.1
+              : TRAIL_LINE_WIDTH;
 
-            // A light dark halo under the trail keeps it legible over any
-            // court color (e.g. a red team's line over red key/paint).
+            // Dark halo under the trail keeps it legible over any court color.
             ctx.setLineDash(dash);
             ctx.strokeStyle = "rgba(0,0,0,0.55)";
             ctx.globalAlpha = segAlpha;
@@ -627,36 +690,51 @@ function TrajectoryViewer({
             ctx.setLineDash([]);
 
             if (showArrows && i % 8 === 0) {
-              ctx.globalAlpha = Math.min(1, alpha);
+              ctx.globalAlpha = isContext ? 0.18 : Math.min(1, alpha);
               drawArrow(ctx, a.x, a.y, b.x, b.y, color);
             }
           }
         }
 
-        ctx.globalAlpha = highlightIds.length && !isHighlight ? 0.35 : 1;
+        ctx.globalAlpha = isContext ? CONTEXT_MARKER_ALPHA : 1;
         const start = mapped[0];
+        const startAlpha = trailSegmentAlpha(mapped, 0, { fadeEnabled: fadeByTime });
+        ctx.globalAlpha = isContext
+          ? 0.08
+          : Math.min(0.45, startAlpha + 0.08);
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(start.x, start.y, isHighlight ? 6 : 4.5, 0, Math.PI * 2);
+        ctx.arc(start.x, start.y, isFocused ? 5.5 : 4, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = "#fff";
         ctx.lineWidth = 1;
+        ctx.globalAlpha = isContext ? CONTEXT_MARKER_ALPHA : 1;
         ctx.stroke();
 
         const end = mapped[mapped.length - 1];
+        ctx.globalAlpha = isContext ? CONTEXT_MARKER_ALPHA : 1;
         ctx.fillStyle = color;
-        const endSize = isHighlight ? 10 : 8;
+        const endSize = isFocused ? 11 : 8;
         ctx.fillRect(end.x - endSize / 2, end.y - endSize / 2, endSize, endSize);
-        ctx.strokeStyle = "#fff";
+        ctx.strokeStyle = isFocused ? "#ffe08a" : "#fff";
+        ctx.lineWidth = isFocused ? 2 : 1;
         ctx.strokeRect(end.x - endSize / 2, end.y - endSize / 2, endSize, endSize);
+        if (isFocused) {
+          ctx.beginPath();
+          ctx.arc(end.x, end.y, endSize / 2 + 3.5, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255,224,138,0.7)";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
 
-        if (showArrows && mapped.length >= 2) {
+        if (showArrows && mapped.length >= 2 && !isContext) {
           const a = mapped[mapped.length - 2];
           const b = mapped[mapped.length - 1];
+          ctx.globalAlpha = isFocused ? 1 : 0.85;
           drawArrow(ctx, a.x, a.y, b.x, b.y, color);
         }
 
-        if (showEvents && focusMarker && isHighlight) {
+        if (showEvents && focusMarker && isFocused) {
           let best = null;
           let bestDt = Infinity;
           for (const p of mapped) {
@@ -690,8 +768,8 @@ function TrajectoryViewer({
     showHeatmap,
     showEvents,
     fadeByTime,
-    duration,
-    highlightIds,
+    focusIds,
+    focusActive,
     focusMarker,
     variant,
     bgReady,
@@ -827,15 +905,18 @@ function TrajectoryViewer({
                 ))}
               </div>
               <p className="status-text">
-                Showing {visiblePlayers.length} of {players.length} players
-                {selectionMode === "team_red"
-                  ? " (Team Red only)"
-                  : selectionMode === "team_blue"
-                    ? " (Team Blue only)"
-                    : selectionMode === "custom"
-                      ? " (Selected only)"
-                      : ""}
-                . Trails for everyone else are hidden.
+                {selectionMode === "custom"
+                  ? focusActive
+                    ? `Focusing ${focusIds.map((id) => `P${id}`).join(", ")} — other players stay visible but dimmed.`
+                    : "Individual focus: check players to emphasize them. Everyone else stays visible at low opacity."
+                  : selectionMode === "team_red"
+                    ? `Showing Team Red only (${visiblePlayers.length} of ${players.length}).`
+                    : selectionMode === "team_blue"
+                      ? `Showing Team Blue only (${visiblePlayers.length} of ${players.length}).`
+                      : `Showing ${visiblePlayers.length} of ${players.length} players.`}
+                {focusActive && selectionMode !== "custom"
+                  ? ` · focus ${focusIds.map((id) => `P${id}`).join(", ")}`
+                  : ""}
               </p>
               <div className="trajectory-player-list">
                 {listedPlayers.map((row) => {
@@ -843,9 +924,16 @@ function TrajectoryViewer({
                   const checked =
                     selectionMode === "all"
                     || selectedIds.includes(gid);
+                  const focused =
+                    selectionMode === "custom" && selectedIds.includes(gid);
                   const teamId = teamIdOf(row);
                   return (
-                    <label key={gid} className="trajectory-player-item">
+                    <label
+                      key={gid}
+                      className={`trajectory-player-item${
+                        focused ? " is-focused" : ""
+                      }`}
+                    >
                       <input
                         type="checkbox"
                         checked={checked}
@@ -861,13 +949,14 @@ function TrajectoryViewer({
                         : teamId === 1
                           ? " · Blue"
                           : ""}
+                      {focused ? " · focus" : ""}
                     </label>
                   );
                 })}
                 {listedPlayers.length === 0 ? (
                   <p className="status-text">
                     {selectionMode === "custom"
-                      ? "No players selected. Switch to All players and check the ones you want, or Confirm a selection on the Select tab first."
+                      ? "No players loaded yet."
                       : "No players match this team filter."}
                   </p>
                 ) : null}

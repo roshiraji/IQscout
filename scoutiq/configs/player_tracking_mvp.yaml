@@ -110,6 +110,14 @@ ball:
   device: "auto"         # follows GPU when present
   every_n_frames: auto   # 1 on GPU, 2 on CPU
   hsv_fallback: true
+  # Reject detections whose bbox center sits in upper stands / scorebug.
+  # Preview applies the same band so existing jobs improve without re-track.
+  spatial_filter:
+    enabled: true
+    y_min: 0.18          # drop upper crowd (normalized image y)
+    y_max: 0.90          # drop lower scorebug strip
+    x_min: 0.02
+    x_max: 0.98
   track:
     iou_threshold: 0.15
     max_missed: 12

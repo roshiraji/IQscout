@@ -12,9 +12,21 @@ _MIN_CIRCULARITY = 0.40
 _MIN_CONF = 0.28
 
 
-def propose_hsv_balls(image_bgr: np.ndarray) -> list[dict]:
+def propose_hsv_balls(
+    image_bgr: np.ndarray,
+    *,
+    spatial_filter: dict | None = None,
+) -> list[dict]:
     """Return candidate ball boxes using orange HSV + circularity gates."""
+    from src.ball.spatial import spatial_gates_from_cfg
+
     h, w = image_bgr.shape[:2]
+    gates = spatial_gates_from_cfg({"spatial_filter": spatial_filter or {}})
+    y_min = float(gates["y_min"]) if gates["enabled"] else 0.06
+    y_max = float(gates["y_max"]) if gates["enabled"] else 0.96
+    x_min = float(gates["x_min"]) if gates["enabled"] else 0.0
+    x_max = float(gates["x_max"]) if gates["enabled"] else 1.0
+
     blurred = cv2.GaussianBlur(image_bgr, (5, 5), 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
     orange = cv2.inRange(hsv, (5, 110, 110), (25, 255, 255))
@@ -39,9 +51,10 @@ def propose_hsv_balls(image_bgr: np.ndarray) -> list[dict]:
         # Reject huge boxes that are likely jerseys / logos.
         if max(bw, bh) > min(w, h) * 0.12:
             continue
-        # Prefer on-court band (exclude extreme scorebug / crowd strips).
-        cy = by + bh / 2.0
-        if cy < h * 0.06 or cy > h * 0.96:
+        # Prefer on-court band (exclude upper crowd / scorebug).
+        cx = (bx + bw / 2.0) / max(w, 1)
+        cy = (by + bh / 2.0) / max(h, 1)
+        if cy < y_min or cy > y_max or cx < x_min or cx > x_max:
             continue
         pad = 3
         x1 = max(0, bx - pad)
