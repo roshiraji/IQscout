@@ -1,0 +1,33 @@
+# CI-only dependencies for GitHub Actions (syntax/compile checks).
+# Do NOT install this on a local GPU machine — use requirements.txt instead.
+#
+# Torch is installed separately from the PyTorch CPU index in .github/workflows/ci.yml
+# so the runner never pulls the multi-GB CUDA 13 toolkit (Errno 28 / disk full).
+
+opencv-python
+ultralytics>=8.4.60
+# torch / torchvision / torchaudio → installed as CPU wheels in ci.yml
+torchreid
+sam2>=1.1.0
+numpy
+pandas
+matplotlib
+scipy
+tqdm
+filterpy
+lap
+supervision
+imageio-ffmpeg
+fastapi
+uvicorn
+python-multipart
+pydantic
+rapidfuzz
+PyYAML
+simple-lama-inpainting
+
+# Intentionally omitted on CI (heavy and unused by compileall):
+# - sportsdataverse  (pulls xgboost + nvidia-nccl ~300MB+)
+# - streamlit        (optional UI)
+# - qdrant-client
+# - tensorboard / gdown

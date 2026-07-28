@@ -1,3 +1,5 @@
+# Local / GPU machine install. For GitHub Actions use requirements-ci.txt
+# (CPU torch only) — see .github/workflows/ci.yml.
 opencv-python
 ultralytics>=8.4.60
 torch
