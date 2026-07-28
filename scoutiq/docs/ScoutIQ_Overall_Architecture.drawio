@@ -1,0 +1,131 @@
+<mxfile host="app.diagrams.net" modified="2026-07-28T01:42:00.000Z" agent="Cursor" version="24.7.17" type="device">
+  <diagram id="scoutiq-overall" name="Overall Architecture">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title" value="ScoutIQ VisionPlay — Overall Architecture (compact)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=20;fontStyle=1;fontColor=#111827;" vertex="1" parent="1">
+          <mxGeometry x="24" y="12" width="700" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="subtitle" value="Local desktop: React UI → FastAPI → GPU job queue → job artifacts. One canonical Analyze pass; Confirm locks selected players; Isolate + Analytics run after." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#6B7280;" vertex="1" parent="1">
+          <mxGeometry x="24" y="40" width="1100" height="22" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== CLIENT ========== -->
+        <mxCell id="lane-ui" value="CLIENT" style="swimlane;html=1;startSize=26;rounded=1;fillColor=#1E3A5F;swimlaneFillColor=#F8FAFC;strokeColor=#3B82F6;fontColor=#FFFFFF;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="24" y="80" width="220" height="520" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-main" value="React Dashboard&#xa;Vite · :5173&#xa;&#xa;Upload clip&#xa;Snapshot select&#xa;Confirm progress&#xa;Results + Isolate&#xa;Coach insights&#xa;Trajectory scrubber&#xa;Play outcome / grades" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#3B82F6;fontColor=#1E3A5F;fontStyle=0;align=left;spacingLeft=10;fontSize=11;" vertex="1" parent="lane-ui">
+          <mxGeometry x="16" y="44" width="188" height="220" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-launch" value="run_scoutiq.bat&#xa;→ launch_app.ps1&#xa;starts API + UI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E0E7FF;strokeColor=#6366F1;fontColor=#312E81;fontSize=11;" vertex="1" parent="lane-ui">
+          <mxGeometry x="16" y="280" width="188" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="ui-poll" value="Polls&#xa;job / confirm /&#xa;isolate status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#94A3B8;fontColor=#334155;fontSize=11;" vertex="1" parent="lane-ui">
+          <mxGeometry x="16" y="370" width="188" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== API ========== -->
+        <mxCell id="lane-api" value="API" style="swimlane;html=1;startSize=26;rounded=1;fillColor=#14532D;swimlaneFillColor=#F8FAFC;strokeColor=#22C55E;fontColor=#FFFFFF;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="264" y="80" width="240" height="520" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-core" value="FastAPI :8000&#xa;app/api_server.py&#xa;&#xa;POST /analyze&#xa;GET /jobs/{id}&#xa;POST /tracking/selection&#xa;GET …/confirm-status&#xa;GET …/isolate-status&#xa;POST …/analytics/…&#xa;GET …/files/{kind}&#xa;identity / play-outcome&#xa;WNBA teams / health" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DCFCE7;strokeColor=#22C55E;fontColor=#14532D;align=left;spacingLeft=10;fontSize=11;" vertex="1" parent="lane-api">
+          <mxGeometry x="16" y="44" width="208" height="260" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-mgr" value="TrackingJobManager&#xa;single GPU job queue&#xa;+ isolate worker" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBF7D0;strokeColor=#16A34A;fontColor=#14532D;fontStyle=1;fontSize=11;" vertex="1" parent="lane-api">
+          <mxGeometry x="16" y="324" width="208" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="api-cfg" value="player_tracking_mvp.yaml&#xa;+ hardware auto-tune" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#86EFAC;fontColor=#166534;fontSize=11;" vertex="1" parent="lane-api">
+          <mxGeometry x="16" y="424" width="208" height="55" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== PIPELINES ========== -->
+        <mxCell id="lane-pipe" value="PIPELINES" style="swimlane;html=1;startSize=26;rounded=1;fillColor=#9A3412;swimlaneFillColor=#F8FAFC;strokeColor=#F97316;fontColor=#FFFFFF;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="524" y="80" width="420" height="520" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="p1" value="1 · ANALYZE&#xa;YOLO player-seg → ByteTrack → OSNet stitch&#xa;→ person_groups + tracks + snapshot&#xa;(+ ball / hoop / possession soft-fail)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFEDD5;strokeColor=#F97316;fontColor=#9A3412;fontStyle=1;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="lane-pipe">
+          <mxGeometry x="16" y="40" width="388" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2" value="2 · CONFIRM (blocking)&#xa;SAM 2.1 video + OSNet ReID lock selected bodies&#xa;→ focused_players / focused_masks + locked_tracks&#xa;→ coach insights · play outcome hook" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FED7AA;strokeColor=#EA580C;fontColor=#7C2D12;fontStyle=1;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="lane-pipe">
+          <mxGeometry x="16" y="132" width="388" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3" value="3 · ISOLATE (background)&#xa;LaMa AI erase / hybrid temporal → focused_isolated" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;fontColor=#78350F;fontStyle=1;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="lane-pipe">
+          <mxGeometry x="16" y="236" width="388" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4" value="4 · ANALYTICS&#xa;segments · trajectories · timeline&#xa;camera-motion (court-anchor) · ball preview · heatmap" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDE68A;strokeColor=#CA8A04;fontColor=#713F12;fontStyle=1;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="lane-pipe">
+          <mxGeometry x="16" y="308" width="388" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5" value="5 · IDENTITY (optional)&#xa;PaddleOCR jersey resolve · WNBA roster match" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF7ED;strokeColor=#FB923C;fontColor=#9A3412;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="lane-pipe">
+          <mxGeometry x="16" y="394" width="388" height="52" as="geometry"/>
+        </mxCell>
+        <mxCell id="pnote" value="Confirm reuses Analyze artifacts — no YOLO re-run. Isolate is queued after Confirm returns." style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;fontColor=#9A3412;fontStyle=2;" vertex="1" parent="lane-pipe">
+          <mxGeometry x="16" y="456" width="388" height="36" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== MODELS ========== -->
+        <mxCell id="lane-models" value="MODELS" style="swimlane;html=1;startSize=26;rounded=1;fillColor=#7F1D1D;swimlaneFillColor=#F8FAFC;strokeColor=#EF4444;fontColor=#FFFFFF;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="964" y="80" width="220" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="m1" value="best_player_seg_v2.pt&#xa;best_ball_det.pt&#xa;best_hoop_ref_seg.pt&#xa;SAM2.1 hiera_b+&#xa;OSNet x0.25&#xa;LaMa (simple-lama)&#xa;PaddleOCR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEE2E2;strokeColor=#EF4444;fontColor=#7F1D1D;align=left;spacingLeft=10;fontSize=11;" vertex="1" parent="lane-models">
+          <mxGeometry x="14" y="42" width="192" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="m2" value="ByteTrack = tracker&#xa;(not a weight file)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF2F2;strokeColor=#FCA5A5;fontColor=#991B1B;fontSize=10;" vertex="1" parent="lane-models">
+          <mxGeometry x="14" y="226" width="192" height="48" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== ARTIFACTS ========== -->
+        <mxCell id="lane-art" value="JOB ARTIFACTS" style="swimlane;html=1;startSize=26;rounded=1;fillColor=#4C1D95;swimlaneFillColor=#F8FAFC;strokeColor=#A78BFA;fontColor=#FFFFFF;fontStyle=1;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="964" y="400" width="220" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="a1" value="outputs/…/jobs/{id}/&#xa;tracks · snapshot&#xa;selection · locked_tracks&#xa;focused_*.mp4&#xa;analytics/*.json&#xa;possession · coach" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE9FE;strokeColor=#A78BFA;fontColor=#4C1D95;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="lane-art">
+          <mxGeometry x="14" y="40" width="192" height="136" as="geometry"/>
+        </mxCell>
+
+        <!-- ========== FLOW EDGES ========== -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748B;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="ui-main" target="api-core">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748B;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="api-mgr" target="p1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#EA580C;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="p1" target="p2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#D97706;strokeWidth=2;endArrow=block;endFill=1;dashed=1;" edge="1" parent="1" source="p2" target="p3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#CA8A04;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="p2" target="p4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="740" y="280"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#EF4444;strokeWidth=1.5;endArrow=block;endFill=1;dashed=1;" edge="1" parent="1" source="m1" target="p1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#A78BFA;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" parent="1" source="p4" target="a1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#3B82F6;strokeWidth=1.5;endArrow=block;endFill=1;dashed=1;" edge="1" parent="1" source="a1" target="ui-main">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1074" y="640"/>
+              <mxPoint x="134" y="640"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ========== LEGEND / FLOW STRIP ========== -->
+        <mxCell id="flow" value="User flow: Upload → Analyze → Select players → Confirm (SAM2 lock) → Results + scrubber → Isolate finishes in background → optional Identity / Analytics refresh" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#111827;strokeColor=#111827;fontColor=#F9FAFB;fontSize=11;align=left;spacingLeft=12;fontStyle=0;" vertex="1" parent="1">
+          <mxGeometry x="24" y="620" width="1160" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend" value="Solid = sync path · Dashed = async / soft dependency · Showcase/GroundingDINO/NBA configs exist but are off the live dashboard path" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=10;fontColor=#6B7280;" vertex="1" parent="1">
+          <mxGeometry x="24" y="664" width="1160" height="20" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
